@@ -157,7 +157,9 @@ export async function fetchAircraft(
       callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
       registration: item.registration ?? null,
       aircraftType: item.aircraftType ?? null,
-      category: categoryFor(item),
+      category: item.isDemo && item.category
+        ? item.category as AircraftCategory
+        : categoryFor(item),
       airline: item.airline ?? null,
       origin: item.origin ?? null,
       destination: item.destination ?? null,

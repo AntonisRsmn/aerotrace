@@ -370,7 +370,7 @@ export default function App() {
           <span className={`status-dot ${error ? 'status-error' : ''}`} />
           <span>{error ? 'Connection issue' : dataMode === 'demo' ? 'Simulated aircraft feed' : 'Aircraft feed'}</span>
           <span className="status-divider" />
-          <span className="source-label">{dataMode === 'demo' ? 'SIMULATED DATA' : source}</span>
+          <span className="source-label">{dataMode === 'demo' ? `DEMO · ${(totalSimulated ?? aircraft.length).toLocaleString()} GENERATED` : source}</span>
         </div>
 
         <div className="topbar-actions">

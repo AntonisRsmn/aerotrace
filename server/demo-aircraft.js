@@ -112,6 +112,18 @@ function interpolate(a, b, progress) {
   const z = scaleA*va[2] + scaleB*vb[2]
   return {lat:degrees(Math.atan2(z, Math.sqrt(x*x+y*y))), lon:((degrees(Math.atan2(y,x))+540)%360)-180}
 }
+function createRouteCoordinates(origin, destination, segments = 64) {
+  const coordinates = []
+  for (let index = 0; index <= segments; index += 1) {
+    const point = interpolate(origin, destination, index / segments)
+    coordinates.push([
+      Number(point.lon.toFixed(5)),
+      Number(point.lat.toFixed(5)),
+    ])
+  }
+  return coordinates
+}
+
 function bearing(a, b) {
   const p1 = radians(a.lat), p2 = radians(b.lat), dl = radians(b.lon-a.lon)
   const y = Math.sin(dl)*Math.cos(p2)
@@ -169,6 +181,8 @@ function createAircraft(index, nowSeconds) {
     isHelicopter: type[2] === 'Helicopter',
     origin: origin.iata,
     destination: destination.iata,
+    // The planned airport-to-airport route is displayed immediately in demo mode.
+    routeCoordinates: isGround ? [] : createRouteCoordinates(origin, destination),
     isDemo: true,
   }
 }

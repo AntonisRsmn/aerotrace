@@ -11,6 +11,7 @@ const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
 
 const ADSBDB_API = 'https://api.adsbdb.com/v0'
+const ADSB_LOL_API = 'https://api.adsb.lol'
 
 const CACHE_TTL_MS = 15_000
 const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000
@@ -604,6 +605,164 @@ async function fetchAircraftAnonymously(bounds) {
   }
 }
 
+
+function normalizeAdsbLolAircraft(item, nowSeconds) {
+  const hex = typeof item?.hex === 'string' ? item.hex.trim().toLowerCase() : ''
+  const longitude = Number(item?.lon)
+  const latitude = Number(item?.lat)
+
+  if (
+    !/^[a-f0-9]{6}$/.test(hex) ||
+    !Number.isFinite(longitude) ||
+    !Number.isFinite(latitude) ||
+    longitude < -180 ||
+    longitude > 180 ||
+    latitude < -90 ||
+    latitude > 90
+  ) {
+    return null
+  }
+
+  const rawAltitude = item.alt_baro
+  const altitude =
+    typeof rawAltitude === 'number'
+      ? rawAltitude
+      : typeof item.alt_geom === 'number'
+        ? item.alt_geom
+        : null
+  const seen = Number(item.seen_pos ?? item.seen)
+
+  return {
+    id: hex,
+    icao24: hex,
+    callsign: typeof item.flight === 'string' ? item.flight.trim() : '',
+    originCountry: null,
+    longitude,
+    latitude,
+    altitudeFt: altitude === null ? null : Math.round(altitude),
+    onGround: rawAltitude === 'ground' || item.ground === true,
+    speedKt: typeof item.gs === 'number' ? Math.round(item.gs) : null,
+    heading:
+      typeof item.track === 'number'
+        ? Math.round(item.track) % 360
+        : null,
+    verticalRateFpm:
+      typeof item.baro_rate === 'number'
+        ? Math.round(item.baro_rate)
+        : typeof item.geom_rate === 'number'
+          ? Math.round(item.geom_rate)
+          : null,
+    squawk: typeof item.squawk === 'string' ? item.squawk : null,
+    categoryCode: null,
+    isHelicopter:
+      typeof item.type === 'string' && item.type.toUpperCase().startsWith('H'),
+    lastSeenSeconds: Number.isFinite(seen) ? Math.max(0, Math.round(seen)) : null,
+  }
+}
+
+async function fetchAircraftFromAdsbLol(bounds) {
+  const latSpan = bounds.lamax - bounds.lamin
+  const lonSpan = bounds.lomax - bounds.lomin
+  const centerLat = (bounds.lamin + bounds.lamax) / 2
+  const centerLon = (bounds.lomin + bounds.lomax) / 2
+
+  // The public ADSB.lol radius endpoint supports up to 250 nautical miles.
+  // Use a small viewport-aware grid to cover ordinary map views without
+  // generating hundreds of upstream requests when the map is zoomed out.
+  const rows = Math.min(3, Math.max(1, Math.ceil(latSpan / 6)))
+  const columns = Math.min(3, Math.max(1, Math.ceil(lonSpan / 6)))
+  const points = []
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      points.push({
+        lat: rows === 1
+          ? centerLat
+          : bounds.lamin + ((row + 0.5) / rows) * latSpan,
+        lon: columns === 1
+          ? centerLon
+          : bounds.lomin + ((column + 0.5) / columns) * lonSpan,
+      })
+    }
+  }
+
+  const uniqueAircraft = new Map()
+  let newestTimestamp = 0
+  let successfulRequests = 0
+  const failures = []
+
+  console.info(
+    `[AeroTrace ADSB.lol] Trying fallback for viewport using ${points.length} radius request(s).`,
+  )
+
+  // Limit concurrency to reduce pressure on this community-run free service.
+  for (let offset = 0; offset < points.length; offset += 3) {
+    const batch = points.slice(offset, offset + 3)
+    const results = await Promise.allSettled(
+      batch.map(async (point) => {
+        const endpoint =
+          `${ADSB_LOL_API}/v2/lat/${point.lat.toFixed(4)}/lon/${point.lon.toFixed(4)}/dist/250`
+        const response = await fetch(endpoint, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        })
+
+        if (!response.ok) {
+          throw createUnavailableError(
+            `ADSB.lol aircraft request failed (${response.status}).`,
+            response.status === 429 ? 429 : 502,
+          )
+        }
+
+        const payload = await response.json()
+        if (!Array.isArray(payload.ac)) {
+          throw createUnavailableError('ADSB.lol returned an unexpected response.')
+        }
+
+        successfulRequests += 1
+        if (typeof payload.now === 'number') {
+          newestTimestamp = Math.max(newestTimestamp, Math.floor(payload.now / 1000))
+        }
+
+        for (const rawAircraft of payload.ac) {
+          const aircraft = normalizeAdsbLolAircraft(rawAircraft, Math.floor(Date.now() / 1000))
+          if (aircraft) {
+            const existing = uniqueAircraft.get(aircraft.id)
+            if (!existing || (aircraft.lastSeenSeconds ?? Infinity) < (existing.lastSeenSeconds ?? Infinity)) {
+              uniqueAircraft.set(aircraft.id, aircraft)
+            }
+          }
+        }
+      }),
+    )
+
+    for (const result of results) {
+      if (result.status === 'rejected') failures.push(result.reason)
+    }
+  }
+
+  if (successfulRequests === 0) {
+    const error = failures[0] || createUnavailableError('ADSB.lol did not return aircraft data.')
+    console.warn('[AeroTrace ADSB.lol] Fallback failed:', {
+      name: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+      code: error?.cause?.code,
+    })
+    throw error
+  }
+
+  const aircraft = [...uniqueAircraft.values()]
+  console.info(
+    `[AeroTrace ADSB.lol] Fallback succeeded: ${aircraft.length} unique aircraft from ${successfulRequests}/${points.length} request(s).`,
+  )
+
+  return {
+    source: 'ADSB.lol',
+    time: newestTimestamp || Math.floor(Date.now() / 1000),
+    aircraft,
+  }
+}
+
 async function fetchAircraftFromAccount(bounds, account) {
   const token = await getAccessToken(account)
 
@@ -661,9 +820,17 @@ async function fetchAircraft(bounds) {
 
   if (accounts.length === 0) {
     console.warn(
-      '[AeroTrace OpenSky] No credentials configured; trying anonymous aircraft access.',
+      '[AeroTrace OpenSky] No credentials configured; trying anonymous access before ADSB.lol.',
     )
-    return fetchAircraftAnonymously(bounds)
+    try {
+      return await fetchAircraftAnonymously(bounds)
+    } catch (anonymousError) {
+      console.warn(
+        '[AeroTrace OpenSky] Anonymous access failed; trying ADSB.lol.',
+        anonymousError instanceof Error ? anonymousError.message : anonymousError,
+      )
+      return fetchAircraftFromAdsbLol(bounds)
+    }
   }
 
   const now = Date.now()
@@ -781,6 +948,12 @@ async function fetchAircraft(bounds) {
         },
       )
       errors.push({ account: 'anonymous fallback', error: fallbackError })
+
+      try {
+        return await fetchAircraftFromAdsbLol(bounds)
+      } catch (alternativeError) {
+        errors.push({ account: 'ADSB.lol fallback', error: alternativeError })
+      }
     }
   }
 

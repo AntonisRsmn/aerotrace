@@ -548,7 +548,7 @@ function normalizeState(state, nowSeconds) {
       category == null || category === '' || !Number.isFinite(Number(category))
         ? null
         : Number(category),
-    isHelicopter: Number(category) === 8,
+    isHelicopter: Number(category) === 7,
     lastSeenSeconds:
       typeof contactTime === 'number'
         ? Math.max(0, Math.round(nowSeconds - contactTime))
@@ -636,15 +636,18 @@ function normalizeAdsbLolAircraft(item, nowSeconds) {
     id: hex,
     icao24: hex,
     callsign: typeof item.flight === 'string' ? item.flight.trim() : '',
-    originCountry: null,
+    originCountry: typeof item.ownop === 'string' ? item.ownop : null,
     longitude,
     latitude,
+    registration: typeof item.r === 'string' && item.r.trim() ? item.r.trim().toUpperCase() : null,
+    aircraftType: typeof item.t === 'string' && item.t.trim() ? item.t.trim().toUpperCase() : null,
+    aircraftTypeCode: typeof item.t === 'string' && item.t.trim() ? item.t.trim().toUpperCase() : null,
     altitudeFt: altitude === null ? null : Math.round(altitude),
-    onGround: rawAltitude === 'ground' || item.ground === true,
-    speedKt: typeof item.gs === 'number' ? Math.round(item.gs) : null,
+    onGround: rawAltitude === 'ground' || item.ground === true ? true : (typeof rawAltitude === 'number' || typeof item.alt_geom === 'number' ? false : null),
+    speedKt: typeof item.gs === 'number' && Number.isFinite(item.gs) ? Math.round(item.gs) : null,
     heading:
-      typeof item.track === 'number'
-        ? Math.round(item.track) % 360
+      typeof item.track === 'number' && Number.isFinite(item.track)
+        ? ((Math.round(item.track) % 360) + 360) % 360
         : null,
     verticalRateFpm:
       typeof item.baro_rate === 'number'
@@ -653,9 +656,14 @@ function normalizeAdsbLolAircraft(item, nowSeconds) {
           ? Math.round(item.geom_rate)
           : null,
     squawk: typeof item.squawk === 'string' ? item.squawk : null,
-    categoryCode: null,
+    categoryCode:
+      item.category != null && Number.isFinite(Number(item.category))
+        ? Number(item.category)
+        : null,
+    category: typeof item.category === 'string' ? item.category : null,
     isHelicopter:
-      typeof item.type === 'string' && item.type.toUpperCase().startsWith('H'),
+      Number(item.category) === 7 ||
+      (typeof item.t === 'string' && /^(H|R22|R44|R66|AS3|AS5|EC|AW|UH|CH)/i.test(item.t)),
     lastSeenSeconds: Number.isFinite(seen) ? Math.max(0, Math.round(seen)) : null,
   }
 }

@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import MapView from './components/MapView'
+import AircraftPhoto from './components/AircraftPhoto'
 import {
   fetchAircraft,
   fetchAircraftDetails,
@@ -39,20 +40,21 @@ function formatLastSeen(value: number | null) {
 
 const routeCardStyle = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 56px minmax(0, 1fr)',
+  gridTemplateColumns: 'minmax(0, 1fr) 44px minmax(0, 1fr)',
   alignItems: 'center',
-  gap: '8px',
+  gap: '10px',
   marginTop: '12px',
-  padding: '16px 12px',
-  background: 'rgba(37, 139, 255, 0.07)',
-  border: '1px solid rgba(88, 169, 255, 0.2)',
-  borderRadius: '10px',
+  padding: '18px 14px',
+  background: 'linear-gradient(135deg, rgba(37, 139, 255, 0.12), rgba(37, 139, 255, 0.035))',
+  border: '1px solid rgba(88, 169, 255, 0.24)',
+  borderRadius: '12px',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.025)',
 } as const
 
 const routeEndpointStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '6px',
+  gap: '8px',
   minWidth: 0,
 } as const
 
@@ -65,9 +67,10 @@ const routeLabelStyle = {
 
 const routeCodeStyle = {
   overflow: 'hidden',
-  color: '#E7EDF6',
+  color: '#F1F6FF',
   fontSize: '14px',
-  fontWeight: 700,
+  fontWeight: 750,
+  letterSpacing: '0.015em',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 } as const
@@ -457,7 +460,7 @@ export default function App() {
                 <span className="toggle-icon">Aa</span>
                 <span>
                   <strong>Aircraft labels</strong>
-                  <small>Show callsigns on map</small>
+                  <small>Show callsigns when hovering</small>
                 </span>
               </span>
               <input
@@ -576,6 +579,13 @@ export default function App() {
                   {selectedAircraft.category}
                 </span>
               </div>
+
+              <AircraftPhoto
+                icao24={selectedAircraft.icao24}
+                registration={
+                  selectedDetails?.registration || selectedAircraft.registration
+                }
+              />
 
               <section className="detail-section">
                 <div className="section-heading section-heading-plain">

@@ -42,10 +42,20 @@ type AircraftProperties = {
   hovered: boolean
 }
 
+type AirportProperties = {
+  name: string
+  iata: string
+  icao: string
+}
+
 const AIRCRAFT_SOURCE = 'aerotrace-aircraft'
 const AIRCRAFT_GLOW_LAYER = 'aerotrace-aircraft-glow'
 const AIRCRAFT_LAYER = 'aerotrace-aircraft-symbols'
 const AIRCRAFT_LABEL_LAYER = 'aerotrace-aircraft-labels'
+
+const AIRPORT_SOURCE = 'aerotrace-airports'
+const AIRPORT_DOTS_LAYER = 'aerotrace-airport-dots'
+const AIRPORT_LABELS_LAYER = 'aerotrace-airport-labels'
 
 const HISTORY_SOURCE = 'aerotrace-history-path'
 const HISTORY_CASING_LAYER = 'aerotrace-history-casing'
@@ -62,6 +72,38 @@ const emptyLines: FeatureCollection<LineString> = {
 const emptyAircraft: FeatureCollection<Point, AircraftProperties> = {
   type: 'FeatureCollection',
   features: [],
+}
+
+const emptyAirports: FeatureCollection<Point, AirportProperties> = {
+  type: 'FeatureCollection',
+  features: [],
+}
+
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let field = ''
+  let quoted = false
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]
+
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') {
+        field += '"'
+        index += 1
+      } else {
+        quoted = !quoted
+      }
+    } else if (character === ',' && !quoted) {
+      fields.push(field)
+      field = ''
+    } else {
+      field += character
+    }
+  }
+
+  fields.push(field)
+  return fields
 }
 
 export default function MapView({
@@ -317,12 +359,154 @@ export default function MapView({
     image.src = url
   }
 
+  async function loadAirports(map: maplibregl.Map) {
+    try {
+      const response = await fetch(
+        'https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv',
+      )
+
+      if (!response.ok) {
+        throw new Error(`Airport dataset request failed (${response.status}).`)
+      }
+
+      const csv = await response.text()
+      const lines = csv.split(/\r?\n/)
+      if (lines.length < 2) return
+
+      const headers = parseCsvLine(lines[0])
+      const column = (name: string) => headers.indexOf(name)
+      const typeIndex = column('type')
+      const nameIndex = column('name')
+      const latIndex = column('latitude_deg')
+      const lonIndex = column('longitude_deg')
+      const iataIndex = column('iata_code')
+      const icaoIndex = column('gps_code')
+
+      const features: FeatureCollection<Point, AirportProperties>['features'] = []
+
+      for (const line of lines.slice(1)) {
+        if (!line) continue
+        const values = parseCsvLine(line)
+        const airportType = values[typeIndex]
+
+        if (airportType !== 'large_airport' && airportType !== 'medium_airport') {
+          continue
+        }
+
+        const latitude = Number(values[latIndex])
+        const longitude = Number(values[lonIndex])
+        if (
+          !Number.isFinite(latitude) ||
+          !Number.isFinite(longitude) ||
+          latitude < -90 ||
+          latitude > 90 ||
+          longitude < -180 ||
+          longitude > 180
+        ) {
+          continue
+        }
+
+        const iata = values[iataIndex] || ''
+        const icao = values[icaoIndex] || ''
+        features.push({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [longitude, latitude],
+          },
+          properties: {
+            name: values[nameIndex] || 'Airport',
+            iata,
+            icao,
+          },
+        })
+      }
+
+      if (mapRef.current !== map) return
+
+      const source = map.getSource(AIRPORT_SOURCE) as
+        | maplibregl.GeoJSONSource
+        | undefined
+      source?.setData({
+        type: 'FeatureCollection',
+        features,
+      })
+    } catch (error) {
+      console.error('[AeroTrace] Could not load airport data:', error)
+    }
+  }
+
   function ensureMapLayers(map: maplibregl.Map) {
     if (
       mapRef.current !== map ||
       !map.isStyleLoaded()
     ) {
       return
+    }
+
+    if (!map.getSource(AIRPORT_SOURCE)) {
+      map.addSource(AIRPORT_SOURCE, {
+        type: 'geojson',
+        data: emptyAirports,
+      })
+    }
+
+    if (!map.getLayer(AIRPORT_DOTS_LAYER)) {
+      map.addLayer({
+        id: AIRPORT_DOTS_LAYER,
+        type: 'circle',
+        source: AIRPORT_SOURCE,
+        minzoom: 3,
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            3, 1.5,
+            6, 3,
+            9, 4.5,
+          ],
+          'circle-color': '#58D7FF',
+          'circle-opacity': 0.95,
+          'circle-stroke-color': '#07111F',
+          'circle-stroke-width': 1.2,
+        },
+      })
+    }
+
+    if (!map.getLayer(AIRPORT_LABELS_LAYER)) {
+      map.addLayer({
+        id: AIRPORT_LABELS_LAYER,
+        type: 'symbol',
+        source: AIRPORT_SOURCE,
+        minzoom: 4.5,
+        layout: {
+          'text-field': [
+            'case',
+            ['!=', ['get', 'iata'], ''],
+            ['get', 'iata'],
+            ['get', 'icao'],
+          ],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            4.5, 8,
+            8, 11,
+          ],
+          'text-anchor': 'top',
+          'text-offset': [0, 0.5],
+          'text-max-width': 7,
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+        },
+        paint: {
+          'text-color': '#BDEFFF',
+          'text-halo-color': '#08121E',
+          'text-halo-width': 1.5,
+        },
+      })
     }
 
     if (!map.getSource(HISTORY_SOURCE)) {
@@ -526,21 +710,21 @@ export default function MapView({
       style: {
         version: 8,
         sources: {
-          osm: {
+          basemap: {
             type: 'raster',
             tiles: [
-              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
             ],
             tileSize: 256,
             attribution:
-              '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+              '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a> · Airport data: <a href="https://ourairports.com/data/">OurAirports</a>',
           },
         },
         layers: [
           {
-            id: 'osm',
+            id: 'basemap',
             type: 'raster',
-            source: 'osm',
+            source: 'basemap',
           },
         ],
       },
@@ -569,6 +753,7 @@ export default function MapView({
     const onLoad = () => {
       ensureMapLayers(map)
       reportBounds()
+      void loadAirports(map)
     }
 
     map.addControl(

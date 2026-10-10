@@ -44,6 +44,8 @@ npm run preview
 
 - Dark, responsive aviation dashboard
 - Interactive MapLibre map with 1000 configurable, moving simulated aircraft across worldwide airport-to-airport routes in demo mode
+- Select an aircraft to see its growing recent-position trail while it moves
+- Real airline names and ICAO airline designators in realistic-format simulated callsigns; the generated flight numbers and routes are not actual live flights
 - Explicit `DEMO DATA` and generated-count labels so simulated traffic is not mistaken for live traffic
 - `AEROTRACE_MODE=dev` or `demo` for simulation; `AEROTRACE_MODE=real` or `live` for live provider-backed aircraft
 - `DEMO_AIRCRAFT_COUNT` to configure 100–3000 simulated aircraft

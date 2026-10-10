@@ -12,7 +12,7 @@ function isNumber(value) {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-function flattenPath(flight) {
+export function flattenPath(flight) {
   const coordinates = flight?.path?.coordinates
   if (!Array.isArray(coordinates)) return []
 
@@ -44,7 +44,7 @@ function flattenPath(flight) {
   return points
 }
 
-function flightToTemplate(flight) {
+export function flightToTemplate(flight) {
   const path = flattenPath(flight)
   if (path.length < 5) return null
   if (!/^[a-f0-9]{6}$/i.test(flight.icao24 || '')) return null

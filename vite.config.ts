@@ -17,6 +17,10 @@ const PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const PHOTO_MISS_CACHE_TTL_MS = 5 * 60 * 1000
 const PHOTO_CACHE_MAX_SIZE = 2000
 
+// Local AeroTrace development address.
+// If Vite uses another port, update this value accordingly.
+const AEROTRACE_ORIGIN = 'http://localhost:5173'
+
 function aircraftPhotoApi(): Plugin {
   const cache = new Map<string, CachedPhoto>()
 
@@ -24,28 +28,40 @@ function aircraftPhotoApi(): Plugin {
     icao24: string,
     registration: string,
   ): Promise<AircraftPhoto | null> {
-    const urls = [
-      `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
-      ...(registration
-        ? [
-            `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
-          ]
-        : []),
-    ]
+    const urls: string[] = []
+
+    if (/^[a-f0-9]{6}$/.test(icao24)) {
+      urls.push(
+        `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
+      )
+    }
+
+    if (registration) {
+      urls.push(
+        `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
+      )
+    }
 
     for (const endpoint of urls) {
       try {
-        const response = await fetch(endpoint, {
+        const upstream = await fetch(endpoint, {
           headers: {
             Accept: 'application/json',
+            Origin: AEROTRACE_ORIGIN,
+            Referer: `${AEROTRACE_ORIGIN}/`,
             'User-Agent': 'AeroTrace/1.0 aircraft-photo-lookup',
           },
           signal: AbortSignal.timeout(8000),
         })
 
-        if (!response.ok) continue
+        if (!upstream.ok) {
+          console.warn(
+            `[AeroTrace photo lookup] Provider returned HTTP ${upstream.status} for ${endpoint}`,
+          )
+          continue
+        }
 
-        const payload: unknown = await response.json()
+        const payload: unknown = await upstream.json()
 
         if (
           !payload ||
@@ -53,6 +69,9 @@ function aircraftPhotoApi(): Plugin {
           !('photos' in payload) ||
           !Array.isArray(payload.photos)
         ) {
+          console.warn(
+            '[AeroTrace photo lookup] Provider returned an unexpected response.',
+          )
           continue
         }
 
@@ -71,6 +90,7 @@ function aircraftPhotoApi(): Plugin {
 
           const thumbnailSource = (value: unknown): string | null => {
             if (typeof value === 'string') return value
+
             if (
               value &&
               typeof value === 'object' &&
@@ -79,6 +99,7 @@ function aircraftPhotoApi(): Plugin {
             ) {
               return value.src
             }
+
             return null
           }
 
@@ -123,8 +144,6 @@ function aircraftPhotoApi(): Plugin {
     name: 'aerotrace-aircraft-photo-api',
 
     configureServer(server) {
-      // Register before Vite's normal middleware so this route is handled
-      // locally, while other /api requests continue to the existing proxy.
       server.middlewares.use(async (request, response, next) => {
         const requestUrl = new URL(
           request.url || '/',
@@ -133,10 +152,15 @@ function aircraftPhotoApi(): Plugin {
 
         if (request.method !== 'GET') return next()
 
+        // Proxy the actual image through Vite to avoid browser-side
+        // cross-origin restrictions.
         if (requestUrl.pathname === '/api/aircraft-photo-image') {
           let photoUrl: URL
+
           try {
-            photoUrl = new URL(requestUrl.searchParams.get('url') || '')
+            photoUrl = new URL(
+              requestUrl.searchParams.get('url') || '',
+            )
           } catch {
             response.statusCode = 400
             response.end('Invalid photo URL.')
@@ -158,22 +182,37 @@ function aircraftPhotoApi(): Plugin {
           try {
             const upstream = await fetch(photoUrl, {
               headers: {
-                Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                Accept:
+                  'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
                 Referer: 'https://www.planespotters.net/',
-                'User-Agent': 'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
+                'User-Agent':
+                  'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
               },
               signal: AbortSignal.timeout(10000),
             })
 
-            const contentType = upstream.headers.get('content-type') || ''
-            if (!upstream.ok || !contentType.toLowerCase().startsWith('image/')) {
+            const contentType =
+              upstream.headers.get('content-type') || ''
+
+            if (
+              !upstream.ok ||
+              !contentType.toLowerCase().startsWith('image/')
+            ) {
               response.statusCode = 502
-              response.end('Photo provider could not return this image.')
+              response.end(
+                'Photo provider could not return this image.',
+              )
               return
             }
 
-            const bytes = Buffer.from(await upstream.arrayBuffer())
-            if (bytes.length === 0 || bytes.length > 12 * 1024 * 1024) {
+            const bytes = Buffer.from(
+              await upstream.arrayBuffer(),
+            )
+
+            if (
+              bytes.length === 0 ||
+              bytes.length > 12 * 1024 * 1024
+            ) {
               response.statusCode = 502
               response.end('Photo image size is invalid.')
               return
@@ -181,26 +220,44 @@ function aircraftPhotoApi(): Plugin {
 
             response.statusCode = 200
             response.setHeader('Content-Type', contentType)
-            response.setHeader('Content-Length', String(bytes.length))
+            response.setHeader(
+              'Content-Length',
+              String(bytes.length),
+            )
             response.setHeader('Cache-Control', 'no-store')
-            response.setHeader('X-Content-Type-Options', 'nosniff')
+            response.setHeader(
+              'X-Content-Type-Options',
+              'nosniff',
+            )
             response.end(bytes)
           } catch (error) {
-            console.warn('[AeroTrace photo image proxy]', error)
+            console.warn(
+              '[AeroTrace photo image proxy]',
+              error instanceof Error ? error.message : error,
+            )
+
             response.statusCode = 502
-            response.end('Aircraft photo image could not be loaded.')
+            response.end(
+              'Aircraft photo image could not be loaded.',
+            )
           }
+
           return
         }
 
-        if (requestUrl.pathname !== '/api/aircraft-photo') return next()
+        if (requestUrl.pathname !== '/api/aircraft-photo') {
+          return next()
+        }
 
         response.setHeader(
           'Content-Type',
           'application/json; charset=utf-8',
         )
         response.setHeader('Cache-Control', 'no-store')
-        response.setHeader('X-Content-Type-Options', 'nosniff')
+        response.setHeader(
+          'X-Content-Type-Options',
+          'nosniff',
+        )
 
         const sendJson = (status: number, body: unknown) => {
           response.statusCode = status
@@ -209,22 +266,34 @@ function aircraftPhotoApi(): Plugin {
 
         const icao24 = (
           requestUrl.searchParams.get('icao24') || ''
-        ).trim().toLowerCase()
+        )
+          .trim()
+          .toLowerCase()
 
         const registration = (
           requestUrl.searchParams.get('registration') || ''
-        ).trim().toUpperCase()
+        )
+          .trim()
+          .toUpperCase()
 
-        if (!/^[a-f0-9]{6}$/.test(icao24)) {
+        const validIcao24 = /^[a-f0-9]{6}$/.test(icao24)
+        const validRegistration =
+          registration.length > 0 &&
+          registration.length <= 12 &&
+          /^[A-Z0-9-]+$/.test(registration)
+
+        // Either a valid ICAO24 or a registration is sufficient.
+        if (!validIcao24 && !validRegistration) {
           return sendJson(400, {
-            error: 'A valid six-character ICAO24 address is required.',
+            error:
+              'Provide a valid six-character ICAO24 address or aircraft registration.',
             photo: null,
           })
         }
 
         if (
-          registration.length > 12 ||
-          (registration && !/^[A-Z0-9-]+$/.test(registration))
+          registration &&
+          !validRegistration
         ) {
           return sendJson(400, {
             error: 'Invalid aircraft registration.',
@@ -232,13 +301,15 @@ function aircraftPhotoApi(): Plugin {
           })
         }
 
-        const key = `${icao24}:${registration}`
+        const key = `${validIcao24 ? icao24 : ''}:${registration}`
         const cached = cache.get(key)
 
         if (
           cached &&
           Date.now() - cached.cachedAt <
-            (cached.photo ? PHOTO_CACHE_TTL_MS : PHOTO_MISS_CACHE_TTL_MS)
+            (cached.photo
+              ? PHOTO_CACHE_TTL_MS
+              : PHOTO_MISS_CACHE_TTL_MS)
         ) {
           return sendJson(200, {
             photo: cached.photo,
@@ -247,7 +318,10 @@ function aircraftPhotoApi(): Plugin {
         }
 
         try {
-          const photo = await lookupPhoto(icao24, registration)
+          const photo = await lookupPhoto(
+            validIcao24 ? icao24 : '',
+            registration,
+          )
 
           cache.delete(key)
           cache.set(key, {
@@ -257,7 +331,9 @@ function aircraftPhotoApi(): Plugin {
 
           while (cache.size > PHOTO_CACHE_MAX_SIZE) {
             const oldestKey = cache.keys().next().value
+
             if (oldestKey === undefined) break
+
             cache.delete(oldestKey)
           }
 
@@ -272,7 +348,8 @@ function aircraftPhotoApi(): Plugin {
           )
 
           return sendJson(502, {
-            error: 'The aircraft photo service is temporarily unavailable.',
+            error:
+              'The aircraft photo service is temporarily unavailable.',
             photo: null,
           })
         }
@@ -283,6 +360,7 @@ function aircraftPhotoApi(): Plugin {
 
 export default defineConfig({
   plugins: [react(), aircraftPhotoApi()],
+
   server: {
     proxy: {
       '/api': {

@@ -40,7 +40,7 @@ type OpenSkyAircraft = {
 
 type AircraftResponse = {
   source?: string
-  mode?: 'demo' | 'live'
+  mode?: 'demo' | 'live' | 'hybrid'
   totalSimulated?: number
   time?: number
   cached?: boolean
@@ -50,10 +50,12 @@ type AircraftResponse = {
 
 export type LiveAircraftResult = {
   source: string
-  mode: 'demo' | 'live'
+  mode: 'demo' | 'live' | 'hybrid'
   time: number
   cached: boolean
   totalSimulated?: number
+  liveAircraftCount?: number
+  liveAvailable?: boolean
   aircraft: Aircraft[]
 }
 
@@ -151,8 +153,10 @@ export async function fetchAircraft(
 
   return {
     source: payload.source || 'OpenSky Network',
-    mode: payload.mode === 'demo' ? 'demo' : 'live',
+    mode: payload.mode === 'demo' || payload.mode === 'hybrid' ? payload.mode : 'live',
     totalSimulated: payload.totalSimulated,
+    liveAircraftCount: payload.liveAircraftCount,
+    liveAvailable: payload.liveAvailable,
     time: payload.time ?? Math.floor(Date.now() / 1000),
     cached: Boolean(payload.cached),
     aircraft: payload.aircraft.map((item) => ({

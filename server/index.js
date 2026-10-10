@@ -224,9 +224,12 @@ async function recordAircraftPositions(aircraft) {
 
     history.callsign = item.callsign || history.callsign
 
+    // Keep persisted observations in timestamp order, including when an API
+    // response contains a slightly older observation than the last saved one.
+    history.points.sort((a, b) => a.time - b.time)
     const previous = history.points[history.points.length - 1]
 
-    if (previous) {
+    if (previous && timestamp >= previous.time) {
       const elapsed = timestamp - previous.time
       const distance = distanceMeters(previous, point)
 
@@ -240,6 +243,7 @@ async function recordAircraftPositions(aircraft) {
     }
 
     history.points.push(point)
+    history.points.sort((a, b) => a.time - b.time)
 
     if (history.points.length > MAX_POINTS_PER_AIRCRAFT) {
       history.points.splice(

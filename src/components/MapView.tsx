@@ -1491,11 +1491,20 @@ export default function MapView({
         let latestSegment = segments[segments.length - 1] ?? []
         if (liveAircraft && latestSegment.length) {
           const lastPoint = latestSegment[latestSegment.length - 1]
+          const ageSeconds = Date.now() / 1000 - lastPoint.time
           const distanceToLive = distanceMeters(
             { longitude: lastPoint.longitude, latitude: lastPoint.latitude },
             { longitude: liveAircraft.longitude, latitude: liveAircraft.latitude },
           )
-          if (distanceToLive > 150_000) {
+
+          // Do not reuse a previous flight's trail merely because the aircraft
+          // later happens to be near the old route. A current-flight connector
+          // must end at a recent point close to the current live position.
+          if (
+            ageSeconds < -30 ||
+            ageSeconds > 180 ||
+            distanceToLive > 80_000
+          ) {
             latestSegment = []
           }
         }

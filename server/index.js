@@ -17,6 +17,9 @@ const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000
 const TIMEOUT_COOLDOWN_MS = 60_000
 const DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+// OpenSky track waypoints update much less frequently than the live state feed.
+// Cache them to avoid spending track API credits on every map poll.
+const OPENSKY_TRACK_CACHE_TTL_MS = 5 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 15_000
 const MAX_POINTS_PER_AIRCRAFT = 5000
 const MIN_TRACK_DISTANCE_METERS = 100
@@ -36,6 +39,8 @@ const aircraftCache = new Map()
 const aircraftDetailsCache = new Map()
 const aircraftPhotoCache = new Map()
 const aircraftRequestsInFlight = new Map()
+const openSkyTrackCache = new Map()
+const openSkyTrackRequestsInFlight = new Map()
 
 let tracks = {}
 let trackWriteQueue = Promise.resolve()
@@ -279,6 +284,115 @@ async function recordAircraftPositions(aircraft) {
 
   if (changed) {
     await persistTracks()
+  }
+}
+
+async function fetchOpenSkyTrackPoints(icao24) {
+  const cached = openSkyTrackCache.get(icao24)
+
+  if (cached && Date.now() - cached.cachedAt < OPENSKY_TRACK_CACHE_TTL_MS) {
+    return cached.points
+  }
+
+  const existingRequest = openSkyTrackRequestsInFlight.get(icao24)
+  if (existingRequest) return existingRequest
+
+  const request = (async () => {
+    const accounts = getOpenSkyAccounts()
+    const now = Date.now()
+
+    for (const account of accounts) {
+      if (now < getAccountCooldown(account.key)) continue
+
+      try {
+        const token = await getAccessToken(account)
+        const query = new URLSearchParams({
+          icao24,
+          time: '0',
+        })
+        const response = await fetch(
+          `${OPENSKY_API}/tracks/all?${query}`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          },
+        )
+
+        if (response.status === 429) {
+          activateAccountCooldown(account.key, RATE_LIMIT_COOLDOWN_MS)
+          continue
+        }
+
+        // A 404 commonly means OpenSky has no active track for this aircraft.
+        if (response.status === 404) {
+          openSkyTrackCache.set(icao24, { points: [], cachedAt: Date.now() })
+          return []
+        }
+
+        if (!response.ok) continue
+
+        const payload = await response.json()
+        const points = (Array.isArray(payload.path) ? payload.path : [])
+          .filter(
+            (point) =>
+              Array.isArray(point) &&
+              Number.isFinite(point[0]) &&
+              Number.isFinite(point[1]) &&
+              Number.isFinite(point[2]) &&
+              point[1] >= -90 &&
+              point[1] <= 90 &&
+              point[2] >= -180 &&
+              point[2] <= 180,
+          )
+          .map((point) => ({
+            time: point[0],
+            latitude: point[1],
+            longitude: point[2],
+            altitudeFt:
+              typeof point[3] === 'number'
+                ? Math.round(point[3] * 3.28084)
+                : null,
+            heading: typeof point[4] === 'number' ? point[4] : null,
+            onGround: typeof point[5] === 'boolean' ? point[5] : null,
+          }))
+          .sort((a, b) => a.time - b.time)
+
+        openSkyTrackCache.set(icao24, {
+          points,
+          cachedAt: Date.now(),
+        })
+        return points
+      } catch (error) {
+        const isTimeout =
+          error?.name === 'TimeoutError' || error?.name === 'AbortError'
+
+        if (isTimeout) {
+          activateAccountCooldown(account.key, TIMEOUT_COOLDOWN_MS)
+        }
+
+        console.warn(
+          `[AeroTrace OpenSky track] ${account.label} account failed:`,
+          error instanceof Error ? error.message : error,
+        )
+      }
+    }
+
+    // Cache temporary misses briefly so polling the map cannot hammer OpenSky.
+    openSkyTrackCache.set(icao24, {
+      points: [],
+      cachedAt: Date.now() - OPENSKY_TRACK_CACHE_TTL_MS + 30_000,
+    })
+    return []
+  })()
+
+  openSkyTrackRequestsInFlight.set(icao24, request)
+
+  try {
+    return await request
+  } finally {
+    if (openSkyTrackRequestsInFlight.get(icao24) === request) {
+      openSkyTrackRequestsInFlight.delete(icao24)
+    }
   }
 }
 
@@ -838,12 +952,40 @@ const server = createServer(async (request, response) => {
     }
 
     const history = tracks[icao24]
+    const recordedPoints = history?.points ?? []
+    const providerPoints = await fetchOpenSkyTrackPoints(icao24)
+
+    // Combine AeroTrace's higher-frequency observations with OpenSky's
+    // trajectory waypoints, then sort the union by observation time.
+    const combined = [...recordedPoints, ...providerPoints]
+      .filter(
+        (point) =>
+          Number.isFinite(point.time) &&
+          Number.isFinite(point.longitude) &&
+          Number.isFinite(point.latitude) &&
+          point.latitude >= -90 &&
+          point.latitude <= 90 &&
+          point.longitude >= -180 &&
+          point.longitude <= 180,
+      )
+      .sort((a, b) => a.time - b.time)
+
+    const seen = new Set()
+    const points = combined.filter((point) => {
+      const key = `${point.time}:${point.longitude.toFixed(5)}:${point.latitude.toFixed(5)}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 
     return sendJson(response, 200, {
       icao24,
       callsign: history?.callsign ?? null,
-      points: history?.points ?? [],
-      source: 'AeroTrace recorded history',
+      points,
+      source: providerPoints.length
+        ? 'AeroTrace recorded history + OpenSky trajectory'
+        : 'AeroTrace recorded history',
+      providerPoints: providerPoints.length,
     })
   }
 

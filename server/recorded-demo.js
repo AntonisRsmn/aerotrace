@@ -167,11 +167,8 @@ function replayFlight(template, index, nowSeconds) {
   const scaled = progress * (template.path.length - 1)
   const pointIndex = Math.min(template.path.length - 2, Math.floor(scaled))
   const point = interpolatePoint(template.path[pointIndex], template.path[pointIndex + 1], scaled - pointIndex)
-  const previous = template.path[Math.max(0, pointIndex - 1)]
   const next = template.path[Math.min(template.path.length - 1, pointIndex + 1)]
   const altitude = point.altitudeFt
-  const previousAltitude = previous.altitudeFt
-  const nextAltitude = next.altitudeFt
   const verticalRateFpm = template.verticalRates.length
     ? template.verticalRates[Math.min(template.verticalRates.length - 1, Math.floor(progress * template.verticalRates.length))]
     : null

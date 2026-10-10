@@ -14,6 +14,7 @@ type CachedPhoto = {
 }
 
 const PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const PHOTO_MISS_CACHE_TTL_MS = 5 * 60 * 1000
 const PHOTO_CACHE_MAX_SIZE = 2000
 
 function aircraftPhotoApi(): Plugin {
@@ -59,28 +60,48 @@ function aircraftPhotoApi(): Plugin {
           if (!item || typeof item !== 'object') continue
 
           const record = item as {
-            thumbnail_large?: { src?: string }
-            thumbnail?: { src?: string }
+            thumbnail_large?: { src?: string } | string
+            thumbnail?: { src?: string } | string
+            thumbnail_small?: { src?: string } | string
+            src?: string
+            url?: string
             link?: string
             photographer?: string
           }
 
+          const thumbnailSource = (value: unknown): string | null => {
+            if (typeof value === 'string') return value
+            if (
+              value &&
+              typeof value === 'object' &&
+              'src' in value &&
+              typeof value.src === 'string'
+            ) {
+              return value.src
+            }
+            return null
+          }
+
           const src =
-            record.thumbnail_large?.src ||
-            record.thumbnail?.src
+            thumbnailSource(record.thumbnail_large) ||
+            thumbnailSource(record.thumbnail) ||
+            thumbnailSource(record.thumbnail_small) ||
+            record.src
+
+          const link = record.link || record.url
 
           if (
             typeof src !== 'string' ||
             !src.startsWith('https://') ||
-            typeof record.link !== 'string' ||
-            !record.link.startsWith('https://')
+            typeof link !== 'string' ||
+            !link.startsWith('https://')
           ) {
             continue
           }
 
           return {
             src,
-            link: record.link,
+            link,
             photographer:
               typeof record.photographer === 'string'
                 ? record.photographer
@@ -159,7 +180,8 @@ function aircraftPhotoApi(): Plugin {
 
         if (
           cached &&
-          Date.now() - cached.cachedAt < PHOTO_CACHE_TTL_MS
+          Date.now() - cached.cachedAt <
+            (cached.photo ? PHOTO_CACHE_TTL_MS : PHOTO_MISS_CACHE_TTL_MS)
         ) {
           return sendJson(200, {
             photo: cached.photo,

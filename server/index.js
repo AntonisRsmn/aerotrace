@@ -2017,13 +2017,26 @@ const server = createServer(async (request, response) => {
   }
 
   // Demo mode is intentionally isolated from every live aircraft provider.
-  // Positions are generated locally on each poll; no OpenSky/ADSB calls occur.
+  // Replay archived ADS-B tracks only. No live aircraft-position provider is called in demo mode.
   if (AEROTRACE_MODE === 'demo') {
-    const simulated = generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
-    return sendJson(response, 200, {
-      ...simulated,
-      cached: false,
-    })
+    try {
+      const simulated = await generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
+      return sendJson(response, 200, {
+        ...simulated,
+        cached: false,
+      })
+    } catch (error) {
+      console.error('[AeroTrace demo replay] Historical track source unavailable:', error instanceof Error ? error.message : error)
+      return sendJson(response, 503, {
+        source: 'AeroTrace Historical Flight Replay',
+        mode: 'demo',
+        time: Math.floor(Date.now() / 1000),
+        aircraft: [],
+        totalSimulated: 0,
+        replayOnly: true,
+        error: 'Historical flight tracks are temporarily unavailable. Please retry shortly.',
+      })
+    }
   }
 
   const cacheKey = [

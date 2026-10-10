@@ -29,13 +29,15 @@ type OpenSkyAircraft = {
   registration?: string | null
   aircraftType?: string | null
   aircraftTypeCode?: string | null
-  categoryCode?: number | null
-  category?: string | null
-  isHelicopter?: boolean
+  origin?: string | null
+  destination?: string | null
+  isDemo?: boolean
 }
 
 type AircraftResponse = {
   source?: string
+  mode?: 'demo' | 'live'
+  totalSimulated?: number
   time?: number
   cached?: boolean
   aircraft: OpenSkyAircraft[]
@@ -44,8 +46,10 @@ type AircraftResponse = {
 
 export type LiveAircraftResult = {
   source: string
+  mode: 'demo' | 'live'
   time: number
   cached: boolean
+  totalSimulated?: number
   aircraft: Aircraft[]
 }
 
@@ -143,18 +147,20 @@ export async function fetchAircraft(
 
   return {
     source: payload.source || 'OpenSky Network',
+    mode: payload.mode === 'demo' ? 'demo' : 'live',
+    totalSimulated: payload.totalSimulated,
     time: payload.time ?? Math.floor(Date.now() / 1000),
     cached: Boolean(payload.cached),
     aircraft: payload.aircraft.map((item) => ({
-      id: item.icao24,
+      id: item.id || item.icao24,
       icao24: item.icao24,
       callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
       registration: item.registration ?? null,
       aircraftType: item.aircraftType ?? null,
       category: categoryFor(item),
       airline: item.airline ?? null,
-      origin: null,
-      destination: null,
+      origin: item.origin ?? null,
+      destination: item.destination ?? null,
       altitudeFt: item.altitudeFt,
       speedKt: item.speedKt,
       heading: item.heading,
@@ -167,6 +173,7 @@ export async function fetchAircraft(
       onGround: item.onGround,
       categoryCode: item.categoryCode ?? null,
       aircraftTypeCode: item.aircraftTypeCode ?? null,
+      isDemo: item.isDemo === true,
       isHelicopter: item.isHelicopter === true || Number(item.categoryCode) === 7 || detectHelicopter(item) || /HELICOPTER|ROTORCRAFT|ROTOR-WING/i.test(item.aircraftType ?? ''),
     })),
   }

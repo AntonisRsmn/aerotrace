@@ -274,16 +274,16 @@ export default function MapView({
   }
 
   function hasBufferedInterpolation(renderTime: number): boolean {
-    for (const buffer of positionBufferRef.current.values()) {
-      if (
-        buffer.length >= 2 &&
-        buffer[0].time <= renderTime &&
-        buffer[buffer.length - 1].time > renderTime
-      ) {
-        return true
-      }
-    }
-    return false
+    const selectedId = selectedIdRef.current
+    if (!selectedId) return false
+
+    const buffer = positionBufferRef.current.get(selectedId)
+    return Boolean(
+      buffer &&
+      buffer.length >= 2 &&
+      buffer[0].time <= renderTime &&
+      buffer[buffer.length - 1].time > renderTime,
+    )
   }
 
   function animateAircraftFrame(map: maplibregl.Map) {
@@ -305,20 +305,21 @@ export default function MapView({
 
     aircraftAnimationLastFrameRef.current = frameTime
     const updates: Array<{ id: string; newGeometry: Point }> = []
+    const selectedId = selectedIdRef.current
 
-    for (const id of aircraftPositionsRef.current.keys()) {
-      const position = getBufferedPosition(id, renderTime)
-      if (!position) continue
+    if (selectedId) {
+      const position = getBufferedPosition(selectedId, renderTime)
+      const previous = aircraftPositionsRef.current.get(selectedId)
 
-      const previous = aircraftPositionsRef.current.get(id)
       if (
+        position &&
         previous &&
         (Math.abs(previous[0] - position[0]) > 0.000001 ||
           Math.abs(previous[1] - position[1]) > 0.000001)
       ) {
-        aircraftPositionsRef.current.set(id, position)
+        aircraftPositionsRef.current.set(selectedId, position)
         updates.push({
-          id,
+          id: selectedId,
           newGeometry: {
             type: 'Point',
             coordinates: position,

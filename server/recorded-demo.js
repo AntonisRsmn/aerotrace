@@ -13,14 +13,22 @@ function isNumber(value) {
 }
 
 function flattenPath(flight) {
-  const segments = flight?.path?.coordinates
-  if (!Array.isArray(segments)) return []
+  const coordinates = flight?.path?.coordinates
+  if (!Array.isArray(coordinates)) return []
+
+  // The API normally returns GeoJSON LineString coordinates as [lon, lat, altitude].
+  // Also accept MultiLineString-style nested segments for forward compatibility.
+  const looksLikePoint = (value) =>
+    Array.isArray(value) && isNumber(value[0]) && isNumber(value[1])
+  const segments = coordinates.length && looksLikePoint(coordinates[0])
+    ? [coordinates]
+    : coordinates
 
   const points = []
   for (const segment of segments) {
     if (!Array.isArray(segment)) continue
     for (const coordinate of segment) {
-      if (!Array.isArray(coordinate) || !isNumber(coordinate[0]) || !isNumber(coordinate[1])) continue
+      if (!looksLikePoint(coordinate)) continue
       const point = {
         longitude: coordinate[0],
         latitude: coordinate[1],
@@ -227,7 +235,6 @@ export async function generateDemoAircraft(bounds, count = 1000) {
   const nowSeconds = Math.floor(Date.now() / 1000)
   const templates = await getTemplates()
   const aircraft = templates
-    .slice(0, Math.max(count * 2, count))
     .map((template, index) => replayFlight(template, index, nowSeconds))
     .filter((item) => insideBounds(item, bounds))
     .slice(0, count)

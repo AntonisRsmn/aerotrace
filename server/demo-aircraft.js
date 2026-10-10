@@ -34,11 +34,35 @@ const AIRPORTS = [
   ['SKBO','BOG','Bogotá','Colombia',4.7016,-74.1469],
 ].map(([icao,iata,name,country,lat,lon]) => ({icao,iata,name,country,lat,lon}))
 
+// Real-world airline ICAO designators and names are used to make demo
+// callsigns look authentic. Flight numbers and positions remain simulated.
 const AIRLINES = [
-  ['ATX','AeroTrace Airways'],['NSA','Northstar Air'],['MDA','Meridian Airlines'],
-  ['BHZ','Blue Horizon'],['GCT','Global Connect'],['SKB','Skybridge'],
-  ['CTL','Continental Link'],['PCW','Pacific Crown'],['ATC','Atlas Cargo'],
-  ['EMR','Euro Meridian'],['SMA','Summit Air'],['ORN','Orion Airways'],
+  ['AEE', 'Aegean Airlines'],
+  ['BAW', 'British Airways'],
+  ['DLH', 'Lufthansa'],
+  ['AFR', 'Air France'],
+  ['KLM', 'KLM Royal Dutch Airlines'],
+  ['UAE', 'Emirates'],
+  ['QTR', 'Qatar Airways'],
+  ['THY', 'Turkish Airlines'],
+  ['AAL', 'American Airlines'],
+  ['UAL', 'United Airlines'],
+  ['DAL', 'Delta Air Lines'],
+  ['SWR', 'Swiss International Air Lines'],
+  ['RYR', 'Ryanair'],
+  ['EZY', 'easyJet'],
+  ['SAS', 'Scandinavian Airlines'],
+  ['QFA', 'Qantas'],
+  ['SIA', 'Singapore Airlines'],
+  ['CPA', 'Cathay Pacific'],
+  ['ANA', 'All Nippon Airways'],
+  ['JAL', 'Japan Airlines'],
+  ['CCA', 'Air China'],
+  ['CSN', 'China Southern Airlines'],
+  ['ETH', 'Ethiopian Airlines'],
+  ['ACA', 'Air Canada'],
+  ['IBE', 'Iberia'],
+  ['TAP', 'TAP Air Portugal'],
 ]
 const TYPES = [
   ['A320','Airbus A320','Passenger',3,390,455],

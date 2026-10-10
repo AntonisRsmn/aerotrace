@@ -1264,7 +1264,9 @@ export default function MapView({
 
         if (cancelled) return
 
-        const seenPositions = new Set<string>()
+        // Sort by the source observation timestamp before drawing the route.
+        // Only remove consecutive duplicate positions: a flight can legitimately
+        // revisit a location later, and that later point must remain in history.
         const orderedPoints = (data.points ?? [])
           .filter(
             (point) =>
@@ -1280,10 +1282,18 @@ export default function MapView({
 
         const positions: Position[] = []
         for (const point of orderedPoints) {
-          const key = `${point.longitude.toFixed(6)},${point.latitude.toFixed(6)}`
-          if (seenPositions.has(key)) continue
-          seenPositions.add(key)
-          positions.push([point.longitude, point.latitude])
+          const position: Position = [point.longitude, point.latitude]
+          const previous = positions[positions.length - 1]
+
+          if (
+            previous &&
+            Math.abs(previous[0] - position[0]) < 0.000001 &&
+            Math.abs(previous[1] - position[1]) < 0.000001
+          ) {
+            continue
+          }
+
+          positions.push(position)
         }
 
         historyRef.current.set(selectedId, positions)

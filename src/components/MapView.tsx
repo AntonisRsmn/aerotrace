@@ -38,6 +38,8 @@ type AircraftProperties = {
   id: string
   callsign: string
   heading: number
+  speedKt: number | null
+  onGround: boolean | null
   selected: boolean
   hovered: boolean
 }
@@ -134,8 +136,17 @@ export default function MapView({
 
   const aircraftPositionsRef = useRef<Map<string, Position>>(new Map())
   const aircraftTargetsRef = useRef<Map<string, Position>>(new Map())
+  const aircraftMotionRef = useRef<
+    Map<string, {
+      observedPosition: Position
+      observedAt: number
+      speedKt: number | null
+      heading: number | null
+      onGround: boolean | null
+    }>
+  >(new Map())
   const aircraftAnimationsRef = useRef<
-    Map<string, { from: Position; to: Position; start: number; duration: number }>
+    Map<string, { from: Position; start: number; duration: number }>
   >(new Map())
   const aircraftAnimationFrameRef = useRef<number | null>(null)
   const aircraftAnimationLastFrameRef = useRef(0)
@@ -174,6 +185,61 @@ export default function MapView({
     }
   }, [showLabels])
 
+  function projectAircraftPosition(
+    motion: {
+      observedPosition: Position
+      observedAt: number
+      speedKt: number | null
+      heading: number | null
+      onGround: boolean | null
+    },
+    now: number,
+  ): Position {
+    const elapsedSeconds = Math.min(55, Math.max(0, (now - motion.observedAt) / 1000))
+    const speedKt = motion.speedKt
+    const heading = motion.heading
+
+    // Dead-reckoning is display-only, limited to 55 seconds between observations.
+    // It uses reported speed/heading and is corrected whenever a new observed
+    // position arrives; the saved trail continues to use observed points only.
+    if (
+      elapsedSeconds <= 0 ||
+      elapsedSeconds >= 55 ||
+      motion.onGround === true ||
+      speedKt == null ||
+      !Number.isFinite(speedKt) ||
+      speedKt < 30 ||
+      heading == null ||
+      !Number.isFinite(heading)
+    ) {
+      return motion.observedPosition
+    }
+
+    const earthRadiusMeters = 6_371_008.8
+    const distanceMeters = (speedKt * 1852 * elapsedSeconds) / 3600
+    const angularDistance = distanceMeters / earthRadiusMeters
+    const bearing = (heading * Math.PI) / 180
+    const latitude1 = (motion.observedPosition[1] * Math.PI) / 180
+    const longitude1 = (motion.observedPosition[0] * Math.PI) / 180
+
+    const latitude2 = Math.asin(
+      Math.sin(latitude1) * Math.cos(angularDistance) +
+        Math.cos(latitude1) * Math.sin(angularDistance) * Math.cos(bearing),
+    )
+    const longitude2 =
+      longitude1 +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude1),
+        Math.cos(angularDistance) - Math.sin(latitude1) * Math.sin(latitude2),
+      )
+
+    let longitude = (longitude2 * 180) / Math.PI
+    if (longitude > 180) longitude -= 360
+    if (longitude < -180) longitude += 360
+
+    return [longitude, (latitude2 * 180) / Math.PI]
+  }
+
   function animateAircraftFrame(map: maplibregl.Map) {
     if (mapRef.current !== map) {
       aircraftAnimationFrameRef.current = null
@@ -182,8 +248,7 @@ export default function MapView({
 
     const frameTime = performance.now()
 
-    // Updating a large GeoJSON source on every display frame is expensive.
-    // 20 updates/second keeps motion smooth while limiting worker/render work.
+    // Cap source updates at 20 FPS; all aircraft are updated in one diff.
     if (frameTime - aircraftAnimationLastFrameRef.current < 50) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
@@ -192,46 +257,54 @@ export default function MapView({
     }
 
     aircraftAnimationLastFrameRef.current = frameTime
+    const updates: Array<{ id: string; newGeometry: Point }> = []
 
-    const updates: Array<{
-      id: string
-      newGeometry: Point
-    }> = []
+    for (const [id, motion] of aircraftMotionRef.current) {
+      const projected = projectAircraftPosition(motion, frameTime)
+      const animation = aircraftAnimationsRef.current.get(id)
+      let position = projected
 
-    for (const [id, animation] of aircraftAnimationsRef.current) {
-      const progress = Math.min(
-        1,
-        Math.max(0, (frameTime - animation.start) / animation.duration),
-      )
-      const eased = progress * progress * (3 - 2 * progress)
-      const longitudeDelta =
-        animation.to[0] - animation.from[0] > 180
-          ? animation.to[0] - animation.from[0] - 360
-          : animation.to[0] - animation.from[0] < -180
-            ? animation.to[0] - animation.from[0] + 360
-            : animation.to[0] - animation.from[0]
+      if (animation) {
+        const progress = Math.min(
+          1,
+          Math.max(0, (frameTime - animation.start) / animation.duration),
+        )
+        const eased = progress * progress * (3 - 2 * progress)
+        const longitudeDelta =
+          projected[0] - animation.from[0] > 180
+            ? projected[0] - animation.from[0] - 360
+            : projected[0] - animation.from[0] < -180
+              ? projected[0] - animation.from[0] + 360
+              : projected[0] - animation.from[0]
 
-      let longitude = animation.from[0] + longitudeDelta * eased
-      if (longitude > 180) longitude -= 360
-      if (longitude < -180) longitude += 360
+        let longitude = animation.from[0] + longitudeDelta * eased
+        if (longitude > 180) longitude -= 360
+        if (longitude < -180) longitude += 360
 
-      const position: Position = [
-        longitude,
-        animation.from[1] + (animation.to[1] - animation.from[1]) * eased,
-      ]
+        position = [
+          longitude,
+          animation.from[1] + (projected[1] - animation.from[1]) * eased,
+        ]
 
-      aircraftPositionsRef.current.set(id, position)
-      updates.push({
-        id,
-        newGeometry: {
-          type: 'Point',
-          coordinates: position,
-        },
-      })
+        if (progress >= 1) {
+          aircraftAnimationsRef.current.delete(id)
+        }
+      }
 
-      if (progress >= 1) {
-        aircraftPositionsRef.current.set(id, animation.to)
-        aircraftAnimationsRef.current.delete(id)
+      const previous = aircraftPositionsRef.current.get(id)
+      if (
+        previous &&
+        (Math.abs(previous[0] - position[0]) > 0.000001 ||
+          Math.abs(previous[1] - position[1]) > 0.000001)
+      ) {
+        aircraftPositionsRef.current.set(id, position)
+        updates.push({
+          id,
+          newGeometry: {
+            type: 'Point',
+            coordinates: position,
+          },
+        })
       }
     }
 
@@ -243,7 +316,18 @@ export default function MapView({
       source.updateData({ update: updates })
     }
 
-    if (aircraftAnimationsRef.current.size > 0) {
+    // Continue while any transition is active or an aircraft can still be
+    // projected forward from its last observed position.
+    const hasMovingAircraft = Array.from(aircraftMotionRef.current.values()).some(
+      (motion) =>
+        motion.onGround !== true &&
+        motion.speedKt != null &&
+        motion.speedKt >= 30 &&
+        motion.heading != null &&
+        frameTime - motion.observedAt < 55_000,
+    )
+
+    if (aircraftAnimationsRef.current.size > 0 || hasMovingAircraft) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -291,6 +375,11 @@ export default function MapView({
           item.heading != null && Number.isFinite(item.heading)
             ? item.heading
             : 0,
+        speedKt:
+          item.speedKt != null && Number.isFinite(item.speedKt)
+            ? item.speedKt
+            : null,
+        onGround: item.onGround,
         selected: id === selectedIdRef.current,
         hovered: id === hoveredIdRef.current,
       }
@@ -310,6 +399,13 @@ export default function MapView({
         })
         aircraftPositionsRef.current.set(id, target)
         aircraftTargetsRef.current.set(id, target)
+        aircraftMotionRef.current.set(id, {
+          observedPosition: target,
+          observedAt: now,
+          speedKt: properties.speedKt,
+          heading: item.heading,
+          onGround: item.onGround,
+        })
         continue
       }
 
@@ -319,12 +415,15 @@ export default function MapView({
           { key: 'id', value: properties.id },
           { key: 'callsign', value: properties.callsign },
           { key: 'heading', value: properties.heading },
+          { key: 'speedKt', value: properties.speedKt },
+          { key: 'onGround', value: properties.onGround },
           { key: 'selected', value: properties.selected },
           { key: 'hovered', value: properties.hovered },
         ],
       })
 
       const previousTarget = aircraftTargetsRef.current.get(id)
+      const motion = aircraftMotionRef.current.get(id)
       if (
         !previousTarget ||
         Math.abs(previousTarget[0] - target[0]) > 0.000001 ||
@@ -332,6 +431,13 @@ export default function MapView({
       ) {
         const from = aircraftPositionsRef.current.get(id) ?? target
         aircraftTargetsRef.current.set(id, target)
+        aircraftMotionRef.current.set(id, {
+          observedPosition: target,
+          observedAt: now,
+          speedKt: properties.speedKt,
+          heading: item.heading,
+          onGround: item.onGround,
+        })
 
         if (
           Math.abs(from[0] - target[0]) < 0.000001 &&
@@ -342,11 +448,15 @@ export default function MapView({
         } else {
           aircraftAnimationsRef.current.set(id, {
             from,
-            to: target,
             start: now,
-            duration: 1200,
+            duration: 1400,
           })
         }
+      } else if (motion) {
+        // Keep velocity data fresh without resetting the position timestamp.
+        motion.speedKt = properties.speedKt
+        motion.heading = item.heading
+        motion.onGround = item.onGround
       }
     }
 
@@ -356,6 +466,7 @@ export default function MapView({
         aircraftPositionsRef.current.delete(id)
         aircraftTargetsRef.current.delete(id)
         aircraftAnimationsRef.current.delete(id)
+        aircraftMotionRef.current.delete(id)
       }
     }
 
@@ -363,8 +474,17 @@ export default function MapView({
       source.updateData({ add, remove, update })
     }
 
+    const hasMovingAircraft = Array.from(aircraftMotionRef.current.values()).some(
+      (motion) =>
+        motion.onGround !== true &&
+        motion.speedKt != null &&
+        motion.speedKt >= 30 &&
+        motion.heading != null &&
+        now - motion.observedAt < 55_000,
+    )
+
     if (
-      aircraftAnimationsRef.current.size > 0 &&
+      (aircraftAnimationsRef.current.size > 0 || hasMovingAircraft) &&
       aircraftAnimationFrameRef.current === null
     ) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
@@ -948,6 +1068,7 @@ export default function MapView({
       aircraftAnimationsRef.current.clear()
       aircraftPositionsRef.current.clear()
       aircraftTargetsRef.current.clear()
+      aircraftMotionRef.current.clear()
       imageLoadingRef.current.clear()
       map.remove()
     }

@@ -432,6 +432,9 @@ export default function MapView({
     ) {
       lastLiveTrailUpdateRef.current = frameTime
       updateLiveTrail(map)
+      if (aircraftRef.current.some((item) => item.id === selectedIdRef.current && item.isDemo)) {
+        updateHistoryPath(map)
+      }
     }
 
     // Keep animation running while any visible aircraft has a recent airborne
@@ -647,11 +650,29 @@ export default function MapView({
       return
     }
 
-    // In demo mode show the complete planned airport-to-airport route
-    // immediately, rather than waiting for the aircraft to accumulate history.
-    const positions = selectedAircraft.isDemo && selectedAircraft.routeCoordinates?.length
-      ? selectedAircraft.routeCoordinates
-      : historyRef.current.get(selectedAircraft.id) ?? []
+    // Demo routes begin at the departure airport and grow continuously
+    // toward the aircraft's current position. They never show the destination
+    // portion before the aircraft has flown it.
+    let positions = historyRef.current.get(selectedAircraft.id) ?? []
+
+    if (selectedAircraft.isDemo && selectedAircraft.routeCoordinates?.length) {
+      const route = selectedAircraft.routeCoordinates
+      const duration = Math.max(1, selectedAircraft.routeDurationSeconds ?? 1)
+      const progressAt = selectedAircraft.routeProgress ?? 0
+      const updatedAt = selectedAircraft.routeProgressUpdatedAt ?? Math.floor(Date.now() / 1000)
+      const progress = (progressAt + Math.max(0, Date.now() / 1000 - updatedAt) / duration) % 1
+      const lastIndex = Math.min(route.length - 1, Math.floor(progress * (route.length - 1)))
+      positions = route.slice(0, lastIndex + 1)
+
+      const currentPosition = aircraftPositionsRef.current.get(selectedAircraft.id) ??
+        ([selectedAircraft.longitude, selectedAircraft.latitude] as Position)
+      const last = positions[positions.length - 1]
+      if (!last ||
+        Math.abs(last[0] - currentPosition[0]) > 0.00001 ||
+        Math.abs(last[1] - currentPosition[1]) > 0.00001) {
+        positions = [...positions, currentPosition]
+      }
+    }
 
     if (positions.length < 2) {
       source.setData(emptyLines)

@@ -1,6 +1,6 @@
 # AeroTrace
 
-Dark-themed worldwide aircraft tracking dashboard with switchable **demo** and **live** aircraft feeds. Demo mode generates clearly labeled simulated flights locally; live mode uses the existing server-side provider integration.
+Dark-themed worldwide aircraft tracking dashboard with **live**, **hybrid**, and **demo** aircraft feeds. Hybrid mode combines real aircraft from the existing provider pipeline with clearly labeled simulated traffic.
 
 ## Requirements
 
@@ -48,31 +48,31 @@ npm run preview
 - Real airline names and ICAO airline designators in realistic-format simulated callsigns; generated flight numbers and routes are not actual live flights
 - Approximate takeoff/climb, cruise, and descent profiles with corresponding speed and altitude changes
 - Explicit `DEMO DATA` and generated-count labels so simulated traffic is not mistaken for live traffic
-- `AEROTRACE_MODE=dev` or `demo` for simulation; `AEROTRACE_MODE=real` or `live` for live provider-backed aircraft
-- `DEMO_AIRCRAFT_COUNT` to configure 100–3000 simulated aircraft
+- `AEROTRACE_MODE=live` for real aircraft only, `hybrid` for live aircraft plus simulated traffic, or `demo` for simulated traffic only
+- `DEMO_AIRCRAFT_COUNT` to configure 100–3000 simulated aircraft in hybrid/demo mode
 - Search by callsign, registration, aircraft type, or origin/destination
 - Filter by aircraft category
 - Select a map marker or list item to view details
 - Sample aircraft list and count
 - Data status clearly marked as DEMO DATA
 
-## Switching between demo and live data
+## Switching aircraft data modes
 
 Edit `.env` and restart `npm run dev:api` after changing the mode:
 
 ```dotenv
-# Showcase mode — does not call live aircraft-position providers
-AEROTRACE_MODE=dev
+# Real aircraft plus simulated background traffic
+AEROTRACE_MODE=hybrid
 DEMO_AIRCRAFT_COUNT=1000
 ```
 
-For real-time aircraft data, use:
+Available modes:
 
-```dotenv
-AEROTRACE_MODE=real
-```
+- `hybrid`: real aircraft from the live provider pipeline plus simulated flights filling out worldwide traffic. The interface shows live and simulated counts separately.
+- `live`: only provider-reported real aircraft.
+- `demo` (or `dev`): simulated traffic only; no live aircraft-position provider calls.
 
-`dev`/`demo` are aliases for simulation. `real`/`live` enable the live provider pipeline. If `DEMO_AIRCRAFT_COUNT` is omitted, the default is 1000; the server clamps the value to 100–3000. Never describe simulated positions as real aircraft data. Keep `.env` local and do not commit provider credentials.
+`real` is accepted as a live-mode alias. If `DEMO_AIRCRAFT_COUNT` is omitted, the default is 1000; the server clamps the value to 100–3000. Simulated traffic is clearly labeled and must not be mistaken for actual aircraft. Keep `.env` local and do not commit provider credentials.
 
 ## Architecture
 

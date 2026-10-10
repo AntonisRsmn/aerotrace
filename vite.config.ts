@@ -100,7 +100,7 @@ function aircraftPhotoApi(): Plugin {
           }
 
           return {
-            src,
+            src: `/api/aircraft-photo-image?url=${encodeURIComponent(src)}`,
             link,
             photographer:
               typeof record.photographer === 'string'
@@ -131,12 +131,69 @@ function aircraftPhotoApi(): Plugin {
           'http://localhost',
         )
 
-        if (
-          request.method !== 'GET' ||
-          requestUrl.pathname !== '/api/aircraft-photo'
-        ) {
-          return next()
+        if (request.method !== 'GET') return next()
+
+        if (requestUrl.pathname === '/api/aircraft-photo-image') {
+          let photoUrl: URL
+          try {
+            photoUrl = new URL(requestUrl.searchParams.get('url') || '')
+          } catch {
+            response.statusCode = 400
+            response.end('Invalid photo URL.')
+            return
+          }
+
+          if (
+            photoUrl.protocol !== 'https:' ||
+            !(
+              photoUrl.hostname === 'planespotters.net' ||
+              photoUrl.hostname.endsWith('.planespotters.net')
+            )
+          ) {
+            response.statusCode = 400
+            response.end('Unsupported photo host.')
+            return
+          }
+
+          try {
+            const upstream = await fetch(photoUrl, {
+              headers: {
+                Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                Referer: 'https://www.planespotters.net/',
+                'User-Agent': 'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
+              },
+              signal: AbortSignal.timeout(10000),
+            })
+
+            const contentType = upstream.headers.get('content-type') || ''
+            if (!upstream.ok || !contentType.toLowerCase().startsWith('image/')) {
+              response.statusCode = 502
+              response.end('Photo provider could not return this image.')
+              return
+            }
+
+            const bytes = Buffer.from(await upstream.arrayBuffer())
+            if (bytes.length === 0 || bytes.length > 12 * 1024 * 1024) {
+              response.statusCode = 502
+              response.end('Photo image size is invalid.')
+              return
+            }
+
+            response.statusCode = 200
+            response.setHeader('Content-Type', contentType)
+            response.setHeader('Content-Length', String(bytes.length))
+            response.setHeader('Cache-Control', 'no-store')
+            response.setHeader('X-Content-Type-Options', 'nosniff')
+            response.end(bytes)
+          } catch (error) {
+            console.warn('[AeroTrace photo image proxy]', error)
+            response.statusCode = 502
+            response.end('Aircraft photo image could not be loaded.')
+          }
+          return
         }
+
+        if (requestUrl.pathname !== '/api/aircraft-photo') return next()
 
         response.setHeader(
           'Content-Type',

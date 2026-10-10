@@ -1980,7 +1980,7 @@ const server = createServer(async (request, response) => {
           )
         }
 
-        const simulated = generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
+        const simulated = await generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
         const data = {
           source: liveAvailable ? 'Live aircraft + AeroTrace simulation' : 'AeroTrace simulation (live feed unavailable)',
           mode: 'hybrid',

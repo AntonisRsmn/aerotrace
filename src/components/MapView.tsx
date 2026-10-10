@@ -405,10 +405,8 @@ export default function MapView({
             : null,
         onGround: item.onGround,
         selected: id === selectedIdRef.current,
-        // Keep the selected aircraft in its yellow, labeled hover state even
-        // after the pointer moves away from the marker.
-        hovered:
-          id === hoveredIdRef.current || id === selectedIdRef.current,
+        // Callsigns are shown only for the aircraft currently under the pointer.
+        hovered: id === hoveredIdRef.current,
         isHelicopter: Boolean(item.isHelicopter),
       }
 
@@ -1164,14 +1162,20 @@ export default function MapView({
       ? (['==', ['get', 'id'], selectedIdRef.current] as maplibregl.FilterSpecification)
       : null
 
-    for (const layerId of [
-      AIRCRAFT_GLOW_LAYER,
-      AIRCRAFT_LAYER,
-      AIRCRAFT_LABEL_LAYER,
-    ]) {
+    for (const layerId of [AIRCRAFT_GLOW_LAYER, AIRCRAFT_LAYER]) {
       if (map.getLayer(layerId)) {
         map.setFilter(layerId, selectionFilter)
       }
+    }
+
+    // Never show every callsign just because no aircraft is selected.
+    // The label layer is filtered exclusively by pointer hover.
+    if (map.getLayer(AIRCRAFT_LABEL_LAYER)) {
+      map.setFilter(AIRCRAFT_LABEL_LAYER, [
+        '==',
+        ['get', 'hovered'],
+        true,
+      ])
     }
 
     updateAircraftSource(map)

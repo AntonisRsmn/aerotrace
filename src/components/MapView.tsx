@@ -166,6 +166,7 @@ export default function MapView({
 
   const hoveredIdRef = useRef<string | null>(null)
   const historyRef = useRef<Map<string, Position[]>>(new Map())
+  const historyLatestTimeRef = useRef<Map<string, number>>(new Map())
   const imageLoadingRef = useRef<Set<string>>(new Set())
 
   const aircraftPositionsRef = useRef<Map<string, Position>>(new Map())
@@ -242,7 +243,7 @@ export default function MapView({
       // selected marker between reports using its last reported velocity, but
       // cap prediction so it never drifts indefinitely or changes the recorded trail.
       const elapsedSeconds = Math.min(
-        55,
+        65,
         Math.max(0, (performance.now() - motion.observedAt - POSITION_BUFFER_DELAY_MS) / 1000),
       )
       const distanceMeters = motion.speedKt * 0.514444 * elapsedSeconds
@@ -389,7 +390,7 @@ export default function MapView({
       selectedMotion.onGround !== true &&
       selectedMotion.speedKt != null &&
       selectedMotion.heading != null &&
-      performance.now() - selectedMotion.observedAt < 55_000
+      performance.now() - selectedMotion.observedAt < 65_000
     )
     if (
       hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) ||
@@ -478,7 +479,8 @@ export default function MapView({
         aircraftTargetsRef.current.set(id, target)
         aircraftMotionRef.current.set(id, {
           observedPosition: target,
-          observedAt: now,
+          // Anchor prediction to the observation time, not the HTTP response time.
+          observedAt: now - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
           speedKt: properties.speedKt,
           heading: item.heading,
           onGround: item.onGround,
@@ -515,7 +517,7 @@ export default function MapView({
         aircraftTargetsRef.current.set(id, target)
         aircraftMotionRef.current.set(id, {
           observedPosition: target,
-          observedAt: now,
+          observedAt: now - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
           speedKt: properties.speedKt,
           heading: item.heading,
           onGround: item.onGround,
@@ -630,6 +632,16 @@ export default function MapView({
     }
 
     const lastObserved = positions[positions.length - 1]
+    const latestHistoryTime = historyLatestTimeRef.current.get(selectedAircraft.id)
+    // Do not draw a predicted connector from an old flight or stale saved point.
+    if (
+      latestHistoryTime == null ||
+      Date.now() / 1000 - latestHistoryTime > 120
+    ) {
+      source.setData(emptyLines)
+      return
+    }
+
     const current =
       aircraftPositionsRef.current.get(selectedAircraft.id) ??
       ([selectedAircraft.longitude, selectedAircraft.latitude] as Position)
@@ -1501,6 +1513,10 @@ export default function MapView({
         }
 
         historyRef.current.set(selectedId, positions)
+        historyLatestTimeRef.current.set(
+          selectedId,
+          latestSegment[latestSegment.length - 1]?.time ?? 0,
+        )
 
         const map = mapRef.current
 

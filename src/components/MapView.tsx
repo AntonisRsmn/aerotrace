@@ -459,7 +459,7 @@ export default function MapView({
         // it is deselected; otherwise highlight only the aircraft under the pointer.
         hovered:
           id === selectedIdRef.current || id === hoveredIdRef.current,
-        isHelicopter: Boolean(item.isHelicopter),
+        isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 8,
       }
 
       nextIds.add(id)

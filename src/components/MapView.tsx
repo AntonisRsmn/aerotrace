@@ -1024,7 +1024,10 @@ export default function MapView({
         const id = event.features?.[0]?.properties?.id
 
         if (typeof id === 'string') {
-          onSelectRef.current(id)
+          // Clicking the selected aircraft again clears the selection.
+          onSelectRef.current(
+            id === selectedIdRef.current ? '' : id,
+          )
         }
       })
 

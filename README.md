@@ -108,3 +108,13 @@ A future live-data backend should be a separate service (for example, Node.js + 
 ## Future vessel support
 
 The shared application model can later be extended with a discriminated target type (`aircraft` / `vessel`) and an AIS provider adapter. Vessel positions and identity fields should remain clearly sourced and timestamped.
+
+## Render deployment
+
+The `npm start` command builds the Vite frontend and then starts the Node server, so the frontend and API are served by the same Render Web Service. Use these Render settings:
+
+- **Build Command:** `npm install`
+- **Start Command:** `npm start`
+- **Environment:** `AEROTRACE_MODE=demo` and optionally `DEMO_AIRCRAFT_COUNT=1000`
+
+Set these under the Render service's **Environment** settings; do not rely on a local `.env` file being present in Render. Save the changes and redeploy. To switch to provider-backed data, change `AEROTRACE_MODE` to `real` and redeploy/restart. Demo mode does not call live aircraft-position or aircraft-detail providers, but the basemap still needs network access.

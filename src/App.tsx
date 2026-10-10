@@ -717,9 +717,9 @@ export default function App() {
 
               {selectedAircraft.isDemo ? (
                 <div className="demo-photo-placeholder" role="note">
-                  <span>SIMULATION</span>
-                  <strong>Demo aircraft</strong>
-                  <small>Aircraft details and flight route are simulated. No real photo is available.</small>
+                  <span>HISTORICAL REPLAY</span>
+                  <strong>Recorded aircraft</strong>
+                  <small>Identity and route come from an archived ADS-B track. This marker is replayed, not live.</small>
                 </div>
               ) : (
                 <AircraftPhoto
@@ -798,6 +798,12 @@ export default function App() {
                     {selectedAircraft.originCountry || 'Unavailable'}
                   </strong>
                 </div>
+                {selectedAircraft.recordedFlightDate && (
+                  <div className="detail-line">
+                    <span>Recorded flight date</span>
+                    <strong>{new Date(selectedAircraft.recordedFlightDate).toLocaleString()}</strong>
+                  </div>
+                )}
                 <div className="detail-line">
                   <span>Squawk</span>
                   <strong>{selectedAircraft.squawk || 'Unavailable'}</strong>
@@ -857,7 +863,9 @@ export default function App() {
                 </div>
 
                 <p className="data-disclaimer">
-                  {detailsLoading
+                  {selectedAircraft.isDemo
+                    ? `Historical ADS-B route replay${selectedAircraft.recordedFlightDate ? ` recorded ${new Date(selectedAircraft.recordedFlightDate).toLocaleDateString()}` : ''}. Marker position is playback, not live.`
+                    : detailsLoading
                     ? 'Looking up aircraft and route information…'
                     : detailsError
                       ? 'Route lookup is temporarily unavailable.'
@@ -882,10 +890,9 @@ export default function App() {
               </section>
 
               <p className="data-disclaimer">
-                The recorded trail begins when AeroTrace observes the aircraft.
-                The blue line is a heading-based estimate, not a confirmed route.
-                Registration, aircraft type, airline and route details may not
-                be available in every response.
+                {selectedAircraft.isDemo
+                  ? 'The blue line follows an archived ADS-B flight track. Current marker position is replayed for demonstration and does not represent the aircraft’s live location.'
+                  : 'The recorded trail begins when AeroTrace observes the aircraft. The blue line is a heading-based estimate, not a confirmed route. Registration, aircraft type, airline and route details may not be available in every response.'}
               </p>
             </div>
           )}

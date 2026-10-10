@@ -756,6 +756,69 @@ function saveCachedPhoto(key, photo) {
   }
 }
 
+function proxiedAircraftPhoto(photo) {
+  if (!photo) return null
+  return {
+    ...photo,
+    src: `/api/aircraft-photo-image?url=${encodeURIComponent(photo.src)}`,
+  }
+}
+
+async function proxyAircraftPhotoImage(url, response) {
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    return sendJson(response, 400, { error: 'Invalid photo URL.' })
+  }
+
+  if (
+    parsed.protocol !== 'https:' ||
+    !(
+      parsed.hostname === 'planespotters.net' ||
+      parsed.hostname.endsWith('.planespotters.net')
+    )
+  ) {
+    return sendJson(response, 400, { error: 'Unsupported photo host.' })
+  }
+
+  try {
+    const upstream = await fetch(parsed, {
+      headers: {
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        Referer: 'https://www.planespotters.net/',
+        'User-Agent': 'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
+      },
+      signal: AbortSignal.timeout(10000),
+    })
+
+    if (!upstream.ok) {
+      return sendJson(response, 502, { error: 'Photo provider could not return this image.' })
+    }
+
+    const contentType = upstream.headers.get('content-type') || ''
+    if (!contentType.toLowerCase().startsWith('image/')) {
+      return sendJson(response, 502, { error: 'Photo provider returned a non-image response.' })
+    }
+
+    const bytes = Buffer.from(await upstream.arrayBuffer())
+    if (bytes.length === 0 || bytes.length > 12 * 1024 * 1024) {
+      return sendJson(response, 502, { error: 'Photo image size is invalid.' })
+    }
+
+    response.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': String(bytes.length),
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    response.end(bytes)
+  } catch (error) {
+    console.warn('[AeroTrace aircraft photo proxy]', error instanceof Error ? error.message : error)
+    return sendJson(response, 502, { error: 'Aircraft photo image could not be loaded.' })
+  }
+}
+
 async function lookupAircraftPhoto(icao24, registration) {
   const endpoints = [
     `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
@@ -895,7 +958,7 @@ const server = createServer(async (request, response) => {
 
     if (cached !== undefined) {
       return sendJson(response, 200, {
-        photo: cached,
+        photo: proxiedAircraftPhoto(cached),
         cached: true,
       })
     }
@@ -908,7 +971,7 @@ const server = createServer(async (request, response) => {
     saveCachedPhoto(cacheKey, photo)
 
     return sendJson(response, 200, {
-      photo,
+      photo: proxiedAircraftPhoto(photo),
       cached: false,
     })
   }

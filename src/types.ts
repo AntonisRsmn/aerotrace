@@ -42,4 +42,8 @@ export type Aircraft = {
   isDemo?: boolean
   /** Simulated planned route coordinates [longitude, latitude]. */
   routeCoordinates?: [number, number][]
+  /** Progress along the simulated route at routeProgressUpdatedAt (0-1). */
+  routeProgress?: number
+  routeDurationSeconds?: number
+  routeProgressUpdatedAt?: number
 }

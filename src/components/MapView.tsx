@@ -1446,6 +1446,14 @@ export default function MapView({
       return
     }
 
+    // Demo positions are synthetic and should never be mixed with real,
+    // server-recorded flight history.
+    if (aircraftRef.current.some((item) => item.id === selectedId && item.isDemo)) {
+      const map = mapRef.current
+      if (map) updateHistoryPath(map)
+      return
+    }
+
     let cancelled = false
     let inFlight = false
     let controller: AbortController | null = null

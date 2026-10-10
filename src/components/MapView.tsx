@@ -312,16 +312,17 @@ export default function MapView({
   }
 
   function hasBufferedInterpolation(renderTime: number): boolean {
-    const selectedId = selectedIdRef.current
-    if (!selectedId) return false
+    for (const buffer of positionBufferRef.current.values()) {
+      if (
+        buffer.length >= 2 &&
+        buffer[0].time <= renderTime &&
+        buffer[buffer.length - 1].time > renderTime
+      ) {
+        return true
+      }
+    }
 
-    const buffer = positionBufferRef.current.get(selectedId)
-    return Boolean(
-      buffer &&
-      buffer.length >= 2 &&
-      buffer[0].time <= renderTime &&
-      buffer[buffer.length - 1].time > renderTime,
-    )
+    return false
   }
 
   function animateAircraftFrame(map: maplibregl.Map) {
@@ -333,7 +334,8 @@ export default function MapView({
     const frameTime = performance.now()
     const renderTime = Date.now() - POSITION_BUFFER_DELAY_MS
 
-    // A steady 20 FPS is smooth enough for a single selected marker and lighter on MapLibre.
+    // Animate the whole visible fleet continuously, not only after selection.
+    // 20 FPS keeps motion smooth while avoiding an update on every display frame.
     if (frameTime - aircraftAnimationLastFrameRef.current < 50) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
@@ -343,11 +345,22 @@ export default function MapView({
 
     aircraftAnimationLastFrameRef.current = frameTime
     const updates: Array<{ id: string; newGeometry: Point }> = []
-    const selectedId = selectedIdRef.current
 
-    if (selectedId) {
-      const position = getBufferedPosition(selectedId, renderTime)
-      const previous = aircraftPositionsRef.current.get(selectedId)
+    for (const item of aircraftRef.current) {
+      const id = item.id
+      const motion = aircraftMotionRef.current.get(id)
+      if (
+        !motion ||
+        motion.onGround === true ||
+        motion.speedKt == null ||
+        motion.heading == null ||
+        motion.speedKt < 20
+      ) {
+        continue
+      }
+
+      const position = getBufferedPosition(id, renderTime)
+      const previous = aircraftPositionsRef.current.get(id)
 
       if (
         position &&
@@ -355,9 +368,9 @@ export default function MapView({
         (Math.abs(previous[0] - position[0]) > 0.000001 ||
           Math.abs(previous[1] - position[1]) > 0.000001)
       ) {
-        aircraftPositionsRef.current.set(selectedId, position)
+        aircraftPositionsRef.current.set(id, position)
         updates.push({
-          id: selectedId,
+          id,
           newGeometry: {
             type: 'Point',
             coordinates: position,
@@ -382,17 +395,20 @@ export default function MapView({
       updateLiveTrail(map)
     }
 
-    // Keep the selected aircraft moving between feed updates when velocity is known.
-    const selectedMotion = selectedIdRef.current
-      ? aircraftMotionRef.current.get(selectedIdRef.current)
-      : null
-    const predictionActive = Boolean(
-      selectedMotion &&
-      selectedMotion.onGround !== true &&
-      selectedMotion.speedKt != null &&
-      selectedMotion.heading != null &&
-      performance.now() - selectedMotion.observedAt < 65_000
-    )
+    // Keep animation running while any visible aircraft has a recent airborne
+    // velocity estimate. Selection only changes styling; it never starts motion.
+    const predictionActive = aircraftRef.current.some((item) => {
+      const motion = aircraftMotionRef.current.get(item.id)
+      return Boolean(
+        motion &&
+        motion.onGround !== true &&
+        motion.speedKt != null &&
+        motion.heading != null &&
+        motion.speedKt >= 20 &&
+        performance.now() - motion.observedAt < 65_000
+      )
+    })
+
     if (
       hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) ||
       predictionActive
@@ -550,16 +566,17 @@ export default function MapView({
       source.updateData({ add, remove, update })
     }
 
-    const selectedMotion = selectedIdRef.current
-      ? aircraftMotionRef.current.get(selectedIdRef.current)
-      : null
-    const predictionActive = Boolean(
-      selectedMotion &&
-      selectedMotion.onGround !== true &&
-      selectedMotion.speedKt != null &&
-      selectedMotion.heading != null &&
-      performance.now() - selectedMotion.observedAt < 55_000
-    )
+    const predictionActive = aircraftRef.current.some((item) => {
+      const motion = aircraftMotionRef.current.get(item.id)
+      return Boolean(
+        motion &&
+        motion.onGround !== true &&
+        motion.speedKt != null &&
+        motion.heading != null &&
+        motion.speedKt >= 20 &&
+        performance.now() - motion.observedAt < 65_000
+      )
+    })
     if (
       (hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) ||
         predictionActive) &&

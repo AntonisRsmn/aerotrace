@@ -1,6 +1,6 @@
 # AeroTrace
 
-Dark-themed worldwide aircraft tracking dashboard with **live**, **hybrid**, and **demo** aircraft feeds. Hybrid mode combines real aircraft from the existing provider pipeline with clearly labeled simulated traffic.
+Dark-themed worldwide aircraft tracking dashboard with **live**, **hybrid**, and **demo replay** modes. Demo mode replays archived ADS-B flight tracks with real recorded callsigns, aircraft identity, route geometry, and available movement samples; it does not display live aircraft positions.
 
 ## Requirements
 
@@ -17,7 +17,7 @@ Create a `.env` file in the project root:
 
 ```dotenv
 # Use simulated traffic without calling live aircraft-position providers
-AEROTRACE_MODE=dev
+AEROTRACE_MODE=demo
 DEMO_AIRCRAFT_COUNT=1000
 ```
 
@@ -31,7 +31,7 @@ npm run dev:api
 npm run dev
 ```
 
-Open the local URL printed by Vite (normally `http://localhost:5173`). Demo mode still uses the map tiles and airport dataset required to draw the basemap and airports; it does not call live aircraft-position or aircraft-detail providers.
+Open the local URL printed by Vite (normally `http://localhost:5173`). Demo mode downloads a cached batch of historical tracks from adsb.aero on the server, then replays those records as demo traffic. It does not query live aircraft-position providers. Basemap tiles still require network access.
 
 ## Production build
 
@@ -43,12 +43,11 @@ npm run preview
 ## Current features
 
 - Dark, responsive aviation dashboard
-- Interactive MapLibre map with 1000 configurable, moving simulated aircraft across worldwide airport-to-airport routes in demo mode
-- Select an aircraft to see its growing recent-position trail while it moves
-- Real airline names and ICAO airline designators in realistic-format simulated callsigns; generated flight numbers and routes are not actual live flights
-- Approximate takeoff/climb, cruise, and descent profiles with corresponding speed and altitude changes
-- Explicit `DEMO DATA` and generated-count labels so simulated traffic is not mistaken for live traffic
-- `AEROTRACE_MODE=live` for real aircraft only, `hybrid` for live aircraft plus simulated traffic, or `demo` for simulated traffic only
+- Interactive MapLibre map that replays recorded ADS-B flight paths, including route bends rather than generated straight-line routes
+- Recorded callsigns, aircraft registrations/types, departure and arrival airport identifiers, and observed altitude/track/speed samples when supplied by the archive
+- Replay markers move along historical recorded routes; displayed positions are playback positions, not live positions
+- Explicit `DEMO REPLAY` labeling so historical replay is not mistaken for live traffic
+- `AEROTRACE_MODE=live` for provider-reported aircraft, `hybrid` for live aircraft plus historical replay, or `demo` for historical replay only
 - `DEMO_AIRCRAFT_COUNT` to configure 100–3000 simulated aircraft in hybrid/demo mode
 - Search by callsign, registration, aircraft type, or origin/destination
 - Filter by aircraft category
@@ -68,11 +67,11 @@ DEMO_AIRCRAFT_COUNT=1000
 
 Available modes:
 
-- `hybrid`: real aircraft from the live provider pipeline plus simulated flights filling out worldwide traffic. The interface shows live and simulated counts separately.
+- `hybrid`: live provider-reported aircraft plus historical replay tracks; the interface shows live and replay counts separately.
 - `live`: only provider-reported real aircraft.
-- `demo` (or `dev`): simulated traffic only; no live aircraft-position provider calls.
+- `demo` (or `dev`): historical recorded tracks replayed as demo traffic; no live aircraft-position provider calls.
 
-`real` is accepted as a live-mode alias. If `DEMO_AIRCRAFT_COUNT` is omitted, the default is 1000; the server clamps the value to 100–3000. Simulated traffic is clearly labeled and must not be mistaken for actual aircraft. Keep `.env` local and do not commit provider credentials.
+`real` is accepted as a live-mode alias. If `DEMO_AIRCRAFT_COUNT` is omitted, the default is 1000; the server clamps the value to 100–3000. Historical replay traffic is clearly labeled and must not be mistaken for actual live positions. Keep `.env` local and do not commit provider credentials.
 
 ## Architecture
 
@@ -97,7 +96,7 @@ MapLibre GL JS is open-source, but map tile/style services have separate terms, 
 
 ## Live aircraft API licensing decision
 
-No live provider is selected or called in this prototype.
+Demo mode uses the public historical archive API at https://adsb.aero/api/docs. The server caches successful track batches in memory and refreshes periodically. Verify the archive's current terms, attribution, and redistribution permissions before commercial/public launch.
 
 - **OpenSky Network:** its current terms say operational REST API integration into a live product/service/automated system requires prior written agreement, and commercial use requires written permission/license. Do not use it as the production source without written approval. See https://opensky-network.org/about/terms-of-use
 - **ADS-B Exchange:** its API is a commercial product and its data-use policy restricts redistributing or publicly sharing data except where authorized. Not a fit for a free-only plan without explicit authorization. See https://www.adsbexchange.com/api/aircraft/v2/docs and https://support.adsbexchange.com/hc/en-us/articles/37364077703693-What-is-ADS-B-Exchange-s-data-use-policy
@@ -117,4 +116,4 @@ The `npm start` command builds the Vite frontend and then starts the Node server
 - **Start Command:** `npm start`
 - **Environment:** `AEROTRACE_MODE=demo` and optionally `DEMO_AIRCRAFT_COUNT=1000`
 
-Set these under the Render service's **Environment** settings; do not rely on a local `.env` file being present in Render. Save the changes and redeploy. To switch to provider-backed data, change `AEROTRACE_MODE` to `real` and redeploy/restart. Demo mode does not call live aircraft-position or aircraft-detail providers, but the basemap still needs network access.
+Set these under the Render service's **Environment** settings; do not rely on a local `.env` file being present in Render. Save the changes and redeploy. To switch to provider-backed data, change `AEROTRACE_MODE` to `real` and redeploy/restart. Demo mode does not call live aircraft-position or aircraft-detail providers, but it does need access to the historical archive API and basemap network access.

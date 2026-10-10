@@ -51,6 +51,7 @@ type AircraftProperties = {
   selected: boolean
   hovered: boolean
   isHelicopter: boolean
+  categoryCode: number | null
 }
 
 type AirportProperties = {
@@ -76,8 +77,8 @@ const LIVE_TRAIL_LAYER = 'aerotrace-live-trail-line'
 
 const PLANE_IMAGE = 'aerotrace-plane-blue-v4'
 const PLANE_IMAGE_HOVER = 'aerotrace-plane-yellow-v4'
-const HELICOPTER_IMAGE = 'aerotrace-helicopter-blue-v1'
-const HELICOPTER_IMAGE_HOVER = 'aerotrace-helicopter-yellow-v1'
+const HELICOPTER_IMAGE = 'aerotrace-helicopter-blue-v2'
+const HELICOPTER_IMAGE_HOVER = 'aerotrace-helicopter-yellow-v2'
 
 const emptyLines: FeatureCollection<LineString> = {
   type: 'FeatureCollection',
@@ -422,12 +423,7 @@ export default function MapView({
     const now = performance.now()
 
     for (const item of aircraftRef.current) {
-      // When an aircraft is selected, keep only that aircraft on the map.
-      // The full aircraft list remains in App so clearing selection restores it.
-      if (selectedIdRef.current && item.id !== selectedIdRef.current) {
-        continue
-      }
-
+      // Keep the entire live fleet visible when one aircraft is selected.
       if (
         !Number.isFinite(item.longitude) ||
         !Number.isFinite(item.latitude) ||
@@ -459,6 +455,7 @@ export default function MapView({
         hovered:
           id === selectedIdRef.current || id === hoveredIdRef.current,
         isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 8 || /HELICOPTER|ROTORCRAFT|ROTORWING/i.test(`${item.aircraftType ?? ''} ${item.category ?? ''}`),
+        categoryCode: item.categoryCode ?? null,
       }
 
       nextIds.add(id)
@@ -503,6 +500,7 @@ export default function MapView({
           { key: 'selected', value: properties.selected },
           { key: 'hovered', value: properties.hovered },
           { key: 'isHelicopter', value: properties.isHelicopter },
+          { key: 'categoryCode', value: properties.categoryCode },
         ],
       })
 
@@ -1117,7 +1115,10 @@ export default function MapView({
         layout: {
           'icon-image': [
             'case',
-            ['boolean', ['get', 'isHelicopter'], false],
+            ['any',
+              ['boolean', ['get', 'isHelicopter'], false],
+              ['==', ['to-number', ['get', 'categoryCode'], -1], 8],
+            ],
             [
               'case',
               ['boolean', ['get', 'hovered'], false],
@@ -1221,16 +1222,10 @@ export default function MapView({
       })
     }
 
-    // Apply selection as a render-layer filter as well as source filtering.
-    // This guarantees that only the selected aircraft is drawn, and clearing
-    // selection restores the full fleet immediately.
-    const selectionFilter = selectedIdRef.current
-      ? (['==', ['get', 'id'], selectedIdRef.current] as maplibregl.FilterSpecification)
-      : null
-
+    // Keep all aircraft visible at all times; selection only highlights the chosen aircraft.
     for (const layerId of [AIRCRAFT_GLOW_LAYER, AIRCRAFT_LAYER]) {
       if (map.getLayer(layerId)) {
-        map.setFilter(layerId, selectionFilter)
+        map.setFilter(layerId, null)
       }
     }
 

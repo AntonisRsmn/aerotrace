@@ -469,6 +469,9 @@ function normalizeState(state, nowSeconds) {
     ,
     geoAltitude,
     squawk,
+    ,
+    ,
+    category,
   ] = state
 
   if (
@@ -514,6 +517,7 @@ function normalizeState(state, nowSeconds) {
         ? Math.round(verticalRate * 196.8504)
         : null,
     squawk: typeof squawk === 'string' ? squawk : null,
+    isHelicopter: category === 8,
     lastSeenSeconds:
       typeof contactTime === 'number'
         ? Math.max(0, Math.round(nowSeconds - contactTime))

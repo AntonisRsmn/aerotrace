@@ -166,7 +166,6 @@ export default function MapView({
 
   const hoveredIdRef = useRef<string | null>(null)
   const historyRef = useRef<Map<string, Position[]>>(new Map())
-  const historyLatestTimeRef = useRef<Map<string, number>>(new Map())
   const imageLoadingRef = useRef<Set<string>>(new Set())
 
   const aircraftPositionsRef = useRef<Map<string, Position>>(new Map())
@@ -632,16 +631,6 @@ export default function MapView({
     }
 
     const lastObserved = positions[positions.length - 1]
-    const latestHistoryTime = historyLatestTimeRef.current.get(selectedAircraft.id)
-    // Do not draw a predicted connector from an old flight or stale saved point.
-    if (
-      latestHistoryTime == null ||
-      Date.now() / 1000 - latestHistoryTime > 120
-    ) {
-      source.setData(emptyLines)
-      return
-    }
-
     const current =
       aircraftPositionsRef.current.get(selectedAircraft.id) ??
       ([selectedAircraft.longitude, selectedAircraft.latitude] as Position)
@@ -1450,85 +1439,23 @@ export default function MapView({
           )
           .sort((a, b) => a.time - b.time)
 
-        // A transponder address is reused for the aircraft's whole life, so
-        // its saved points can contain multiple flights. Split at ground points,
-        // long time gaps, and physically implausible jumps; draw only the latest
-        // segment that still matches the live aircraft position.
-        const segments: typeof orderedPoints[] = []
-        let segment: typeof orderedPoints = []
-        for (const point of orderedPoints) {
-          const previous = segment[segment.length - 1]
-          let breakSegment = false
-
-          if (previous) {
-            const elapsed = point.time - previous.time
-            const distance = distanceMeters(
-              { longitude: previous.longitude, latitude: previous.latitude },
-              { longitude: point.longitude, latitude: point.latitude },
-            )
-            const impliedSpeedKmh = elapsed > 0 ? (distance / elapsed) * 3.6 : Infinity
-            breakSegment =
-              elapsed <= 0 ||
-              elapsed > 30 * 60 ||
-              (elapsed < 10 * 60 && distance > 100_000) ||
-              impliedSpeedKmh > 1_200
-          }
-
-          if (breakSegment && segment.length) {
-            segments.push(segment)
-            segment = []
-          }
-
-          segment.push(point)
-
-          // A ground observation ends the prior flight. Keep it as the first
-          // point of a possible new segment, rather than joining through it.
-          if (point.onGround === true && segment.length > 1) {
-            segments.push(segment.slice(0, -1))
-            segment = [point]
-          }
-        }
-        if (segment.length) segments.push(segment)
-
-        const liveAircraft = aircraftRef.current.find((item) => item.id === selectedId)
-        let latestSegment = segments[segments.length - 1] ?? []
-        if (liveAircraft && latestSegment.length) {
-          const lastPoint = latestSegment[latestSegment.length - 1]
-          const ageSeconds = Date.now() / 1000 - lastPoint.time
-          const distanceToLive = distanceMeters(
-            { longitude: lastPoint.longitude, latitude: lastPoint.latitude },
-            { longitude: liveAircraft.longitude, latitude: liveAircraft.latitude },
-          )
-
-          // Do not reuse a previous flight's trail merely because the aircraft
-          // later happens to be near the old route. A current-flight connector
-          // must end at a recent point close to the current live position.
-          if (
-            ageSeconds < -30 ||
-            ageSeconds > 180 ||
-            distanceToLive > 80_000
-          ) {
-            latestSegment = []
-          }
-        }
-
         const positions: Position[] = []
-        for (const point of latestSegment) {
+        for (const point of orderedPoints) {
           const position: Position = [point.longitude, point.latitude]
           const previous = positions[positions.length - 1]
+
           if (
             previous &&
             Math.abs(previous[0] - position[0]) < 0.000001 &&
             Math.abs(previous[1] - position[1]) < 0.000001
-          ) continue
+          ) {
+            continue
+          }
+
           positions.push(position)
         }
 
         historyRef.current.set(selectedId, positions)
-        historyLatestTimeRef.current.set(
-          selectedId,
-          latestSegment[latestSegment.length - 1]?.time ?? 0,
-        )
 
         const map = mapRef.current
 
@@ -1556,7 +1483,7 @@ export default function MapView({
 
     const interval = window.setInterval(() => {
       void loadSavedTrack()
-    }, 30_000)
+    }, 3000)
 
     return () => {
       cancelled = true

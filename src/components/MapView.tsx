@@ -23,6 +23,14 @@ type Props = {
 
 type Position = [number, number]
 
+type TimedPosition = {
+  position: Position
+  time: number
+}
+
+const POSITION_BUFFER_DELAY_MS = 3000
+const MAX_POSITION_BUFFER_POINTS = 8
+
 type SavedTrack = {
   points?: Array<{
     time: number
@@ -159,6 +167,7 @@ export default function MapView({
 
   const aircraftPositionsRef = useRef<Map<string, Position>>(new Map())
   const aircraftTargetsRef = useRef<Map<string, Position>>(new Map())
+  const positionBufferRef = useRef<Map<string, TimedPosition[]>>(new Map())
   const aircraftMotionRef = useRef<
     Map<string, {
       observedPosition: Position
@@ -209,20 +218,69 @@ export default function MapView({
     }
   }, [showLabels])
 
-  function projectAircraftPosition(
-    motion: {
-      observedPosition: Position
-      observedAt: number
-      speedKt: number | null
-      heading: number | null
-      onGround: boolean | null
-    },
-  ): Position {
-    // Use reported coordinates only. Speed/heading dead-reckoning made aircraft
-    // drift forward between feed updates, then snap backward when OpenSky sent
-    // the next observed position. Interpolation below smooths observed updates
-    // without displaying invented coordinates.
-    return motion.observedPosition
+  function getBufferedPosition(id: string, renderTime: number): Position | null {
+    const buffer = positionBufferRef.current.get(id)
+    if (!buffer?.length) return null
+    if (buffer.length === 1 || renderTime <= buffer[0].time) {
+      return buffer[0].position
+    }
+
+    for (let index = 1; index < buffer.length; index += 1) {
+      const next = buffer[index]
+      const previous = buffer[index - 1]
+      if (renderTime > next.time) continue
+
+      const span = next.time - previous.time
+      if (span <= 0) return next.position
+
+      const progress = Math.max(0, Math.min(1, (renderTime - previous.time) / span))
+      // Interpolate the shortest longitude path so tracks crossing the
+      // international date line don't travel the long way around the globe.
+      let longitudeDelta = next.position[0] - previous.position[0]
+      if (longitudeDelta > 180) longitudeDelta -= 360
+      if (longitudeDelta < -180) longitudeDelta += 360
+
+      let longitude = previous.position[0] + longitudeDelta * progress
+      if (longitude > 180) longitude -= 360
+      if (longitude < -180) longitude += 360
+
+      return [
+        longitude,
+        previous.position[1] + (next.position[1] - previous.position[1]) * progress,
+      ]
+    }
+
+    // Never extrapolate beyond the newest observation: hold the last known
+    // position until another real feed observation arrives.
+    return buffer[buffer.length - 1].position
+  }
+
+  function addPositionObservation(id: string, position: Position, time: number) {
+    const existing = positionBufferRef.current.get(id) ?? []
+    const last = existing[existing.length - 1]
+
+    // Out-of-order or duplicate timestamps can cause visible reversals. Ignore
+    // them instead of moving the display timeline backwards.
+    if (last && time <= last.time) return
+
+    existing.push({ position, time })
+    if (existing.length > MAX_POSITION_BUFFER_POINTS) {
+      existing.splice(0, existing.length - MAX_POSITION_BUFFER_POINTS)
+    }
+    positionBufferRef.current.set(id, existing)
+  }
+
+  function hasBufferedInterpolation(renderTime: number): boolean {
+    for (const buffer of positionBufferRef.current.values()) {
+      if (
+        buffer.length >= 2 &&
+        buffer[0].time <= renderTime &&
+        buffer[buffer.length - 1].time > renderTime
+      ) {
+        return true
+      }
+    }
+    return false
   }
 
   function animateAircraftFrame(map: maplibregl.Map) {
@@ -232,10 +290,10 @@ export default function MapView({
     }
 
     const frameTime = performance.now()
+    const renderTime = Date.now() - POSITION_BUFFER_DELAY_MS
 
-    // Cap GeoJSON source diffs at 10 FPS. This is a better trade-off for
-    // large aircraft sets while CSS/map rendering keeps motion visually smooth.
-    if (frameTime - aircraftAnimationLastFrameRef.current < 100) {
+    // Update the map at up to ~30 FPS while buffered observations are available.
+    if (frameTime - aircraftAnimationLastFrameRef.current < 33) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -245,37 +303,9 @@ export default function MapView({
     aircraftAnimationLastFrameRef.current = frameTime
     const updates: Array<{ id: string; newGeometry: Point }> = []
 
-    for (const [id, motion] of aircraftMotionRef.current) {
-      const projected = projectAircraftPosition(motion)
-      const animation = aircraftAnimationsRef.current.get(id)
-      let position = projected
-
-      if (animation) {
-        const progress = Math.min(
-          1,
-          Math.max(0, (frameTime - animation.start) / animation.duration),
-        )
-        const eased = progress * progress * (3 - 2 * progress)
-        const longitudeDelta =
-          projected[0] - animation.from[0] > 180
-            ? projected[0] - animation.from[0] - 360
-            : projected[0] - animation.from[0] < -180
-              ? projected[0] - animation.from[0] + 360
-              : projected[0] - animation.from[0]
-
-        let longitude = animation.from[0] + longitudeDelta * eased
-        if (longitude > 180) longitude -= 360
-        if (longitude < -180) longitude += 360
-
-        position = [
-          longitude,
-          animation.from[1] + (projected[1] - animation.from[1]) * eased,
-        ]
-
-        if (progress >= 1) {
-          aircraftAnimationsRef.current.delete(id)
-        }
-      }
+    for (const id of aircraftPositionsRef.current.keys()) {
+      const position = getBufferedPosition(id, renderTime)
+      if (!position) continue
 
       const previous = aircraftPositionsRef.current.get(id)
       if (
@@ -310,8 +340,8 @@ export default function MapView({
       updateLiveTrail(map)
     }
 
-    // Continue rendering only while an observed-position transition is active.
-    if (aircraftAnimationsRef.current.size > 0) {
+    // Continue only while the delayed render clock has observations to interpolate.
+    if (hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS)) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -399,6 +429,11 @@ export default function MapView({
           heading: item.heading,
           onGround: item.onGround,
         })
+        addPositionObservation(
+          id,
+          target,
+          Date.now() - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
+        )
         continue
       }
 
@@ -422,7 +457,6 @@ export default function MapView({
         Math.abs(previousTarget[0] - target[0]) > 0.000001 ||
         Math.abs(previousTarget[1] - target[1]) > 0.000001
       ) {
-        const from = aircraftPositionsRef.current.get(id) ?? target
         aircraftTargetsRef.current.set(id, target)
         aircraftMotionRef.current.set(id, {
           observedPosition: target,
@@ -431,26 +465,17 @@ export default function MapView({
           heading: item.heading,
           onGround: item.onGround,
         })
-
-        if (
-          Math.abs(from[0] - target[0]) < 0.000001 &&
-          Math.abs(from[1] - target[1]) < 0.000001
-        ) {
-          aircraftAnimationsRef.current.delete(id)
-          aircraftPositionsRef.current.set(id, target)
-        } else {
-          aircraftAnimationsRef.current.set(id, {
-            from,
-            start: now,
-            duration: 900,
-          })
-        }
       } else if (motion) {
-        // Keep velocity data fresh without resetting the position timestamp.
         motion.speedKt = properties.speedKt
         motion.heading = item.heading
         motion.onGround = item.onGround
       }
+
+      addPositionObservation(
+        id,
+        target,
+        Date.now() - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
+      )
     }
 
     for (const id of aircraftPositionsRef.current.keys()) {
@@ -460,6 +485,7 @@ export default function MapView({
         aircraftTargetsRef.current.delete(id)
         aircraftAnimationsRef.current.delete(id)
         aircraftMotionRef.current.delete(id)
+        positionBufferRef.current.delete(id)
       }
     }
 
@@ -468,7 +494,7 @@ export default function MapView({
     }
 
     if (
-      aircraftAnimationsRef.current.size > 0 &&
+      hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) &&
       aircraftAnimationFrameRef.current === null
     ) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
@@ -1163,6 +1189,7 @@ export default function MapView({
       lastLiveTrailUpdateRef.current = 0
       aircraftPositionsRef.current.clear()
       aircraftTargetsRef.current.clear()
+      positionBufferRef.current.clear()
       aircraftMotionRef.current.clear()
       imageLoadingRef.current.clear()
       map.remove()

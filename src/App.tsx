@@ -139,21 +139,26 @@ export default function App() {
 
         if (!active) return
 
-        setAircraft(result.aircraft)
+        setAircraft((currentAircraft) => {
+          // Keep the selected aircraft in state when a map pan changes the
+          // visible-bounds query and that aircraft is no longer in its results.
+          // If it is returned by the new query, use its fresh live data.
+          const selectedAircraft = selectedId
+            ? currentAircraft.find((item) => item.id === selectedId)
+            : null
+          const selectedIncluded = selectedId
+            ? result.aircraft.some((item) => item.id === selectedId)
+            : true
+
+          if (selectedAircraft && !selectedIncluded) {
+            return [...result.aircraft, selectedAircraft]
+          }
+
+          return result.aircraft
+        })
         setSource(result.source)
         setUpdatedAt(result.time)
         setError(null)
-
-        setSelectedId((currentId) => {
-          if (
-            currentId &&
-            result.aircraft.some((item) => item.id === currentId)
-          ) {
-            return currentId
-          }
-
-          return null
-        })
       } catch (caught) {
         if (
           !active ||

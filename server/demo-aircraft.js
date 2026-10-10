@@ -148,15 +148,35 @@ function createAircraft(index, nowSeconds) {
   const airline = AIRLINES[Math.floor(random() * AIRLINES.length)]
   const callsign = airline[0] + (100 + Math.floor(random() * 8900))
   const isGround = random() < 0.065
-  const speed = type[4] + random() * (type[5] - type[4])
+  const cruiseSpeed = type[4] + random() * (type[5] - type[4])
   const distance = distanceKm(origin, destination)
-  const duration = Math.max(35 * 60, distance / Math.max(100, speed * 1.852) * 3600)
+  const duration = Math.max(35 * 60, distance / Math.max(100, cruiseSpeed * 1.852) * 3600)
   const progress = (nowSeconds / duration + random()) % 1
   let position = interpolate(origin, destination, progress)
   if (isGround) { position = {lat:origin.lat, lon:origin.lon}; destination = origin }
+
+  // Approximate a realistic flight profile: acceleration after takeoff,
+  // cruise in the middle of the route, then deceleration during descent.
+  const climbPhase = !isGround && progress < 0.12
+  const descentPhase = !isGround && progress > 0.86
+  const phaseFactor = isGround ? 0 : climbPhase
+    ? 0.72 + (progress / 0.12) * 0.28
+    : descentPhase
+      ? 1 - ((progress - 0.86) / 0.14) * 0.24
+      : 1
+  const speed = Math.round(cruiseSpeed * phaseFactor)
+  const cruiseAltitude = Math.round((27000 + random() * 13000) / 100) * 100
+  const altitudeFactor = isGround ? 0 : climbPhase
+    ? Math.min(1, progress / 0.12)
+    : descentPhase
+      ? Math.max(0.04, 1 - (progress - 0.86) / 0.14)
+      : 1
+  const altitude = Math.round((cruiseAltitude * altitudeFactor) / 100) * 100
+  const verticalRate = isGround ? 0
+    : climbPhase ? 700 + Math.round(random() * 1800)
+      : descentPhase ? -(600 + Math.round(random() * 1600))
+        : Math.round((random() - 0.5) * 250)
   const flightHeading = isGround ? null : Math.round(bearing(position, destination)) % 360
-  const altitude = isGround ? 0 : Math.round((18000 + random()*22000)/100)*100
-  const verticalRate = isGround ? 0 : progress < .08 ? 900 + Math.round(random()*1500) : progress > .91 ? -(700 + Math.round(random()*1300)) : Math.round((random()-.5)*300)
   const id = 'demo-' + String(index+1).padStart(4,'0')
   return {
     id,

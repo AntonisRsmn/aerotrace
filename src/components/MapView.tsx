@@ -420,7 +420,10 @@ export default function MapView({
             : null,
         onGround: item.onGround,
         selected: id === selectedIdRef.current,
-        hovered: id === hoveredIdRef.current,
+        // Keep the selected aircraft in its yellow, labeled hover state even
+        // after the pointer moves away from the marker.
+        hovered:
+          id === hoveredIdRef.current || id === selectedIdRef.current,
       }
 
       nextIds.add(id)

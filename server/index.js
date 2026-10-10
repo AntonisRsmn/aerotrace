@@ -27,6 +27,8 @@ const MIN_TRACK_INTERVAL_SECONDS = 15
 const MAX_TRACKED_AIRCRAFT = 10_000
 const MAX_DETAILS_CACHE_SIZE = 2000
 const MAX_PHOTO_CACHE_SIZE = 2000
+const AIRCRAFT_TYPE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const MAX_TYPE_LOOKUPS_PER_MINUTE = 24
 
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data')
 const TRACKS_FILE = join(DATA_DIR, 'tracks.json')
@@ -37,6 +39,8 @@ const accountCooldowns = new Map()
 
 const aircraftCache = new Map()
 const aircraftDetailsCache = new Map()
+const aircraftTypeCache = new Map()
+const aircraftTypeRequestsInFlight = new Map()
 const aircraftPhotoCache = new Map()
 const aircraftRequestsInFlight = new Map()
 const openSkyTrackCache = new Map()
@@ -44,6 +48,8 @@ const openSkyTrackRequestsInFlight = new Map()
 
 let tracks = {}
 let trackWriteQueue = Promise.resolve()
+let typeLookupWindowStartedAt = Date.now()
+let typeLookupsInWindow = 0
 
 function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, {
@@ -726,6 +732,141 @@ function saveDetails(key, data) {
   }
 }
 
+function isRotorcraftMetadata(aircraft) {
+  const typeCode = String(aircraft?.icao_type || '').trim().toUpperCase()
+  const description = [
+    typeCode,
+    aircraft?.type,
+    aircraft?.manufacturer,
+  ].filter(Boolean).join(' ').toUpperCase()
+
+  if (/HELICOPTER|ROTORCRAFT|ROTOR-WING|ROTOR WING/.test(description)) {
+    return true
+  }
+
+  // ICAO type designators commonly used by helicopters. Keep this list
+  // deliberately specific so fixed-wing types are not classified by accident.
+  return /^(A109|A119|A139|A169|A189|AS32|AS50|AS55|AS65|B06|B06T|B47G|B407|B412|B429|B430|BK17|BK11|CH47|CH53|EC20|EC25|EC30|EC35|EC45|EC55|EC75|H120|H125|H130|H135|H145|H160|H175|H215|H225|MD52|MD60|MI8|MI17|MI24|R22|R44|R66|S61|S76|S92|UH60|AW09|AW10|AW11|AW13|AW16|AW18|AW19|AW20|AW22|AW25|AW30|AW32|AW39|AW60)/.test(typeCode)
+}
+
+async function lookupAircraftType(icao24) {
+  const existing = aircraftTypeRequestsInFlight.get(icao24)
+  if (existing) return existing
+
+  const request = (async () => {
+    const response = await fetch(
+      `${ADSBDB_API}/aircraft/${encodeURIComponent(icao24)}`,
+      {
+        signal: AbortSignal.timeout(6000),
+        headers: { Accept: 'application/json' },
+      },
+    )
+
+    if (response.status === 404) {
+      const empty = {
+        registration: null,
+        aircraftType: null,
+        aircraftTypeCode: null,
+        isHelicopter: false,
+      }
+      aircraftTypeCache.set(icao24, { data: empty, cachedAt: Date.now() })
+      return empty
+    }
+
+    if (!response.ok) {
+      throw new Error(`Aircraft type provider returned ${response.status}.`)
+    }
+
+    const payload = await response.json()
+    const record = payload?.response?.aircraft
+    if (!record || typeof record !== 'object') {
+      throw new Error('Aircraft type provider returned an invalid record.')
+    }
+
+    const typeCode = String(record.icao_type || '').trim().toUpperCase() || null
+    const model = [record.manufacturer, record.type].filter(Boolean).join(' ').trim()
+    const metadata = {
+      registration: record.registration || null,
+      aircraftType: [typeCode, model].filter(Boolean).join(' · ') || null,
+      aircraftTypeCode: typeCode,
+      isHelicopter: isRotorcraftMetadata(record),
+    }
+
+    aircraftTypeCache.delete(icao24)
+    aircraftTypeCache.set(icao24, { data: metadata, cachedAt: Date.now() })
+    while (aircraftTypeCache.size > MAX_DETAILS_CACHE_SIZE) {
+      const oldestKey = aircraftTypeCache.keys().next().value
+      if (oldestKey === undefined) break
+      aircraftTypeCache.delete(oldestKey)
+    }
+
+    return metadata
+  })()
+
+  aircraftTypeRequestsInFlight.set(icao24, request)
+  try {
+    return await request
+  } finally {
+    if (aircraftTypeRequestsInFlight.get(icao24) === request) {
+      aircraftTypeRequestsInFlight.delete(icao24)
+    }
+  }
+}
+
+function applyAircraftTypeMetadata(data) {
+  const now = Date.now()
+  if (now - typeLookupWindowStartedAt >= 60_000) {
+    typeLookupWindowStartedAt = now
+    typeLookupsInWindow = 0
+  }
+
+  for (const item of data.aircraft || []) {
+    const cached = aircraftTypeCache.get(item.icao24)
+    if (cached && now - cached.cachedAt < AIRCRAFT_TYPE_CACHE_TTL_MS) {
+      Object.assign(item, cached.data, {
+        isHelicopter: Boolean(item.isHelicopter || cached.data.isHelicopter),
+      })
+    }
+  }
+
+  // Enrich a small number per minute in the background. Live position updates
+  // remain fast, while repeated map polls reuse the metadata cache.
+  for (const item of data.aircraft || []) {
+    if (typeLookupsInWindow >= MAX_TYPE_LOOKUPS_PER_MINUTE) break
+    if (
+      item.isHelicopter ||
+      aircraftTypeCache.has(item.icao24) ||
+      aircraftTypeRequestsInFlight.has(item.icao24)
+    ) continue
+
+    typeLookupsInWindow += 1
+    void lookupAircraftType(item.icao24)
+      .then((metadata) => {
+        // Update all currently cached map responses for this aircraft so the
+        // next regular poll can deliver its resolved type to the client.
+        for (const entry of aircraftCache.values()) {
+          const matching = entry.data.aircraft?.find(
+            (candidate) => candidate.icao24 === item.icao24,
+          )
+          if (matching) {
+            Object.assign(matching, metadata, {
+              isHelicopter: Boolean(matching.isHelicopter || metadata.isHelicopter),
+            })
+          }
+        }
+        Object.assign(item, metadata, {
+          isHelicopter: Boolean(item.isHelicopter || metadata.isHelicopter),
+        })
+      })
+      .catch((error) => {
+        console.warn(
+          '[AeroTrace aircraft type lookup]',
+          error instanceof Error ? error.message : error,
+        )
+      })
+  }
+}
+
 /* Aircraft photo lookup and caching. */
 
 function getCachedPhoto(key) {
@@ -1231,6 +1372,7 @@ const server = createServer(async (request, response) => {
 
   // Return fresh cache data without using either OpenSky account.
   if (cached && now - cached.cachedAt < CACHE_TTL_MS) {
+    applyAircraftTypeMetadata(cached.data)
     return sendJson(response, 200, {
       ...cached.data,
       cached: true,
@@ -1277,6 +1419,7 @@ const server = createServer(async (request, response) => {
         data,
         cachedAt: Date.now(),
       })
+      applyAircraftTypeMetadata(data)
 
       while (aircraftCache.size > 100) {
         const oldestKey = aircraftCache.keys().next().value
@@ -1294,6 +1437,7 @@ const server = createServer(async (request, response) => {
 
   try {
     const data = await pendingRequest
+    applyAircraftTypeMetadata(data)
 
     return sendJson(response, 200, {
       ...data,

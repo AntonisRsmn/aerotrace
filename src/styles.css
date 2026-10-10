@@ -263,17 +263,19 @@ button:disabled {
 }
 
 .sidebar {
-  top: 16px;
-  bottom: 16px;
+  top: 12px;
+  bottom: 46px;
   left: 16px;
   width: 318px;
+  margin-bottom: 30px;
 }
 
 .details-panel {
-  top: 16px;
+  top: 12px;
   right: 16px;
-  bottom: 16px;
+  bottom: 46px;
   width: 318px;
+  margin-bottom: 30px;
 }
 
 .panel-heading {
@@ -1350,4 +1352,168 @@ button:disabled {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ==========================================
+   AeroTrace layout and responsive fixes
+   ========================================== */
+
+/* Keep panels within the dashboard viewport. */
+.dashboard {
+  min-height: 0;
+  isolation: isolate;
+}
+
+.panel {
+  min-height: 0;
+  max-height: calc(100% - 32px);
+}
+
+.sidebar,
+.details-panel {
+  bottom: 16px;
+}
+
+/* Keep map navigation controls clear of the details panel. */
+.maplibregl-ctrl-top-right {
+  top: 16px !important;
+  right: 350px !important;
+}
+
+/* Keep the map legend clear of the left sidebar. */
+.map-legend {
+  left: 350px;
+  max-width: calc(100% - 700px);
+  flex-wrap: wrap;
+}
+
+/* Avoid shrinking panel content until it becomes clipped. */
+.sidebar,
+.details-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.aircraft-list,
+.details-content {
+  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* More compact panels on medium-sized desktop screens. */
+@media (max-width: 1250px) {
+  .sidebar {
+    left: 12px;
+    width: 280px;
+  }
+
+  .details-panel {
+    right: 12px;
+    width: 280px;
+  }
+
+  .maplibregl-ctrl-top-right {
+    right: 306px !important;
+  }
+
+  .map-legend {
+    left: 292px;
+    max-width: calc(100% - 600px);
+  }
+}
+
+/* On tablets, allow the map to use more of the screen. */
+@media (max-width: 950px) {
+  .maplibregl-ctrl-top-right {
+    right: 12px !important;
+  }
+
+  .map-legend {
+    left: 12px;
+    max-width: calc(100% - 24px);
+  }
+}
+
+/* Mobile layout: map first, panels opened through existing toggles. */
+@media (max-width: 700px) {
+  .sidebar,
+  .details-panel {
+    top: 10px;
+    right: 10px;
+    bottom: 52px;
+    left: 10px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100% - 62px);
+  }
+
+  .maplibregl-ctrl-top-right {
+    top: 12px !important;
+    right: 12px !important;
+  }
+
+  .map-legend {
+    right: 10px;
+    bottom: 82px;
+    left: 10px;
+    max-width: none;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .map-legend > span {
+    font-size: 8px;
+  }
+
+  .map-attribution {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    max-width: 100%;
+  }
+
+  .details-content {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .detail-line {
+    gap: 10px;
+  }
+
+  .detail-line > span {
+    min-width: 75px;
+  }
+
+  .detail-line strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Very small phones. */
+@media (max-width: 390px) {
+  .panel-heading {
+    padding: 14px 13px;
+  }
+
+  .stats-grid {
+    gap: 5px;
+  }
+
+  .stat-card strong {
+    font-size: 17px;
+  }
+
+  .map-legend {
+    gap: 6px;
+    padding: 7px;
+  }
+
+  .detail-metric {
+    padding: 11px 10px;
+  }
+
 }

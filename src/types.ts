@@ -27,4 +27,5 @@ export type Aircraft = {
   lastSeenSeconds: number | null
   originCountry?: string | null
   onGround?: boolean | null
+  isHelicopter?: boolean
 }

@@ -405,8 +405,10 @@ export default function MapView({
             : null,
         onGround: item.onGround,
         selected: id === selectedIdRef.current,
-        // Callsigns are shown only for the aircraft currently under the pointer.
-        hovered: id === hoveredIdRef.current,
+        // Keep the selected aircraft in its highlighted, labeled state until
+        // it is deselected; otherwise highlight only the aircraft under the pointer.
+        hovered:
+          id === selectedIdRef.current || id === hoveredIdRef.current,
         isHelicopter: Boolean(item.isHelicopter),
       }
 
@@ -1168,13 +1170,15 @@ export default function MapView({
       }
     }
 
-    // Never show every callsign just because no aircraft is selected.
-    // The label layer is filtered exclusively by pointer hover.
+    // Labels remain hover-only for the fleet, but the selected aircraft
+    // stays highlighted and labeled until selection is cleared.
     if (map.getLayer(AIRCRAFT_LABEL_LAYER)) {
       map.setFilter(AIRCRAFT_LABEL_LAYER, [
-        '==',
-        ['get', 'hovered'],
-        true,
+        'any',
+        ['==', ['get', 'hovered'], true],
+        ...(selectedIdRef.current
+          ? [['==', ['get', 'id'], selectedIdRef.current]]
+          : []),
       ])
     }
 

@@ -781,24 +781,27 @@ export default function MapView({
 
     imageLoadingRef.current.add(imageName)
 
-    // Top-down helicopter silhouette with main rotor and tail rotor.
+    // Recognizable top-down helicopter: four-blade main rotor, cabin,
+    // narrow tail boom and a separate tail rotor.
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-        <g fill="none" stroke="#07111F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M32 18 L32 8 M17 8 H47 M32 17 L32 44 L45 53 L45 57 L32 49 L19 57 L19 53 L32 44" />
-          <path d="M25 29 C25 23 39 23 39 29 L39 39 C39 45 25 45 25 39 Z" fill="${fillColor}" />
-          <path d="M32 18 V8 M27 8 H37 M47 52 H56" />
+        <g stroke="#07111F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M32 7 V37 M10 22 H54" />
+          <path d="M32 34 V55" />
+          <path d="M25 55 H39 M32 48 V62" />
         </g>
-        <g fill="${fillColor}" stroke="#07111F" stroke-width="2.5" stroke-linejoin="round">
-          <path d="M32 18 C38 18 40 24 40 31 V39 C40 45 36 48 32 48 C28 48 24 45 24 39 V31 C24 24 26 18 32 18 Z" />
-          <path d="M29 26 L35 26 L37 36 L27 36 Z" fill="#D9F2FF" />
-          <path d="M30 46 L34 46 L36 55 L28 55 Z" />
-          <path d="M32 6 L34 8 L32 10 L30 8 Z" />
+        <g stroke="${fillColor}" stroke-width="2.6" stroke-linecap="round" fill="none">
+          <path d="M32 5 V39 M7 22 H57" />
+          <path d="M32 36 V55" />
+          <path d="M25 55 H39 M32 48 V62" />
         </g>
-        <g stroke="${fillColor}" stroke-width="2.2" stroke-linecap="round">
-          <path d="M10 8 H54" />
-          <path d="M54 8 L51 5 M54 8 L51 11" />
-        </g>
+        <path d="M32 10 C39 10 42 17 42 25 V34 C42 39 37 43 32 43 C27 43 22 39 22 34 V25 C22 17 25 10 32 10 Z"
+          fill="${fillColor}" stroke="#07111F" stroke-width="3" />
+        <path d="M25 20 Q32 14 39 20 L38 27 H26 Z"
+          fill="#D9F2FF" stroke="#07111F" stroke-width="2" />
+        <path d="M27 42 H37 L35 53 H29 Z"
+          fill="${fillColor}" stroke="#07111F" stroke-width="2.5" />
+        <circle cx="32" cy="22" r="2.5" fill="#FFFFFF" />
       </svg>
     `
 

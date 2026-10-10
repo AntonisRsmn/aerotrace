@@ -40,11 +40,11 @@ function formatLastSeen(value: number | null) {
 
 const routeCardStyle = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 44px minmax(0, 1fr)',
+  gridTemplateColumns: 'minmax(0, 1fr) 28px minmax(0, 1fr)',
   alignItems: 'center',
-  gap: '10px',
+  gap: '8px',
   marginTop: '12px',
-  padding: '18px 14px',
+  padding: '16px 12px',
   background: 'linear-gradient(135deg, rgba(37, 139, 255, 0.12), rgba(37, 139, 255, 0.035))',
   border: '1px solid rgba(88, 169, 255, 0.24)',
   borderRadius: '12px',
@@ -66,13 +66,18 @@ const routeLabelStyle = {
 } as const
 
 const routeCodeStyle = {
+  display: '-webkit-box',
   overflow: 'hidden',
   color: '#F1F6FF',
-  fontSize: '14px',
+  fontSize: '13px',
   fontWeight: 750,
-  letterSpacing: '0.015em',
+  letterSpacing: '0.005em',
+  lineHeight: 1.35,
+  overflowWrap: 'anywhere',
   textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  WebkitBoxOrient: 'vertical',
+  WebkitLineClamp: 2,
+  whiteSpace: 'normal',
 } as const
 
 export default function App() {

@@ -5,3 +5,8 @@ dist
 !.env.example
 .DS_Store
 server/data/tracks.json
+# Runtime aircraft tracking data (generated locally; do not commit)
+track.json
+tracks.json
+**/track.json
+**/tracks.json

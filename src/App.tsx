@@ -374,7 +374,7 @@ export default function App() {
           <span className={`status-dot ${error ? 'status-error' : ''}`} />
           <span>{error ? 'Connection issue' : dataMode === 'demo' ? 'Historical flight replay' : dataMode === 'hybrid' ? 'Live + simulated aircraft feed' : 'Aircraft feed'}</span>
           <span className="status-divider" />
-          <span className="source-label">{dataMode === 'demo' ? `DEMO REPLAY · adsb.aero · ${(totalSimulated ?? aircraft.length).toLocaleString()} TRACKS` : dataMode === 'hybrid' ? `${liveAvailable === false ? 'LIVE FEED UNAVAILABLE · ' : ''}${(liveAircraftCount ?? 0).toLocaleString()} LIVE · ${(totalSimulated ?? 0).toLocaleString()} SIMULATED` : source}</span>
+          <span className="source-label">{dataMode === 'demo' ? `DEMO REPLAY · adsb.aero · ${(totalSimulated ?? aircraft.length).toLocaleString()} TRACKS` : dataMode === 'hybrid' ? `${liveAvailable === false ? 'LIVE FEED UNAVAILABLE · ' : ''}${(liveAircraftCount ?? 0).toLocaleString()} LIVE · ${(totalSimulated ?? 0).toLocaleString()} REPLAY` : source}</span>
         </div>
 
         <div className="topbar-actions">

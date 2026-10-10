@@ -85,6 +85,13 @@ export default function App() {
   const [bounds, setBounds] = useState<MapBounds | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'airborne' | 'ground' | 'unknown'>('all')
+  const [aircraftKindFilter, setAircraftKindFilter] = useState<'all' | 'helicopter' | 'non-helicopter'>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'known' | 'unknown'>('all')
+  const [minAltitude, setMinAltitude] = useState('')
+  const [maxAltitude, setMaxAltitude] = useState('')
+  const [minSpeed, setMinSpeed] = useState('')
+  const [maxSpeed, setMaxSpeed] = useState('')
   const [showLabels, setShowLabels] = useState(true)
   const [showTrails, setShowTrails] = useState(true)
   const [showAirports, setShowAirports] = useState(true)
@@ -203,21 +210,53 @@ export default function App() {
 
   const filteredAircraft = useMemo(() => {
     const query = search.trim().toLowerCase()
+    const minAlt = minAltitude.trim() === '' ? null : Number(minAltitude)
+    const maxAlt = maxAltitude.trim() === '' ? null : Number(maxAltitude)
+    const minGs = minSpeed.trim() === '' ? null : Number(minSpeed)
+    const maxGs = maxSpeed.trim() === '' ? null : Number(maxSpeed)
 
-    if (!query) return aircraft
+    return aircraft.filter((item) => {
+      const matchesSearch = !query || [
+        item.callsign, item.icao24, item.registration, item.aircraftType,
+        item.airline, item.originCountry, item.squawk, item.category,
+      ].some((value) => value?.toLowerCase().includes(query))
+      if (!matchesSearch) return false
 
-    return aircraft.filter((item) =>
-      [
-        item.callsign,
-        item.icao24,
-        item.registration,
-        item.aircraftType,
-        item.airline,
-        item.originCountry,
-        item.squawk,
-      ].some((value) => value?.toLowerCase().includes(query)),
-    )
-  }, [aircraft, search])
+      if (statusFilter === 'airborne' && item.onGround !== false) return false
+      if (statusFilter === 'ground' && item.onGround !== true) return false
+      if (statusFilter === 'unknown' && item.onGround != null) return false
+
+      const isHelicopter = Boolean(item.isHelicopter) || item.category === 'Helicopter'
+      if (aircraftKindFilter === 'helicopter' && !isHelicopter) return false
+      if (aircraftKindFilter === 'non-helicopter' && isHelicopter) return false
+
+      const hasType = Boolean(item.aircraftType?.trim())
+      if (typeFilter === 'known' && !hasType) return false
+      if (typeFilter === 'unknown' && hasType) return false
+
+      if (minAlt != null && (!Number.isFinite(minAlt) || item.altitudeFt == null || item.altitudeFt < minAlt)) return false
+      if (maxAlt != null && (!Number.isFinite(maxAlt) || item.altitudeFt == null || item.altitudeFt > maxAlt)) return false
+      if (minGs != null && (!Number.isFinite(minGs) || item.speedKt == null || item.speedKt < minGs)) return false
+      if (maxGs != null && (!Number.isFinite(maxGs) || item.speedKt == null || item.speedKt > maxGs)) return false
+      return true
+    })
+  }, [aircraft, search, statusFilter, aircraftKindFilter, typeFilter, minAltitude, maxAltitude, minSpeed, maxSpeed])
+
+  const activeFilterCount = [
+    search.trim() !== '', statusFilter !== 'all', aircraftKindFilter !== 'all',
+    typeFilter !== 'all', minAltitude !== '', maxAltitude !== '', minSpeed !== '', maxSpeed !== '',
+  ].filter(Boolean).length
+
+  const clearFilters = () => {
+    setSearch('')
+    setStatusFilter('all')
+    setAircraftKindFilter('all')
+    setTypeFilter('all')
+    setMinAltitude('')
+    setMaxAltitude('')
+    setMinSpeed('')
+    setMaxSpeed('')
+  }
 
   const selectedAircraft = useMemo(
     () => aircraft.find((item) => item.id === selectedId) ?? null,
@@ -330,6 +369,7 @@ export default function App() {
             onBoundsChange={handleBoundsChange}
             showTrails={showTrails}
             showLabels={showLabels}
+            showAirports={showAirports}
           />
         </div>
 
@@ -407,6 +447,55 @@ export default function App() {
             )}
           </label>
 
+          <section className="filter-panel" aria-label="Aircraft filters">
+            <div className="filter-panel-heading">
+              <span className="section-heading-label">FILTERS</span>
+              <span className="filter-count">{activeFilterCount} active</span>
+              <button type="button" className="filter-reset" onClick={clearFilters} disabled={activeFilterCount === 0}>Reset</button>
+            </div>
+            <label className="filter-field">
+              <span>Flight status</span>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+                <option value="all">All statuses</option>
+                <option value="airborne">Airborne</option>
+                <option value="ground">On ground</option>
+                <option value="unknown">Unknown status</option>
+              </select>
+            </label>
+            <div className="filter-two-column">
+              <label className="filter-field">
+                <span>Aircraft kind</span>
+                <select value={aircraftKindFilter} onChange={(event) => setAircraftKindFilter(event.target.value as typeof aircraftKindFilter)}>
+                  <option value="all">All kinds</option>
+                  <option value="helicopter">Helicopters</option>
+                  <option value="non-helicopter">Non-helicopters</option>
+                </select>
+              </label>
+              <label className="filter-field">
+                <span>Aircraft type</span>
+                <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)}>
+                  <option value="all">Any type data</option>
+                  <option value="known">Type known</option>
+                  <option value="unknown">Type unknown</option>
+                </select>
+              </label>
+            </div>
+            <div className="filter-range-group">
+              <span className="filter-range-title">Altitude (ft)</span>
+              <div className="filter-two-column">
+                <label className="filter-field"><span className="sr-only">Minimum altitude in feet</span><input type="number" min="0" placeholder="Min altitude" value={minAltitude} onChange={(event) => setMinAltitude(event.target.value)} /></label>
+                <label className="filter-field"><span className="sr-only">Maximum altitude in feet</span><input type="number" min="0" placeholder="Max altitude" value={maxAltitude} onChange={(event) => setMaxAltitude(event.target.value)} /></label>
+              </div>
+            </div>
+            <div className="filter-range-group">
+              <span className="filter-range-title">Ground speed (kt)</span>
+              <div className="filter-two-column">
+                <label className="filter-field"><span className="sr-only">Minimum ground speed in knots</span><input type="number" min="0" placeholder="Min speed" value={minSpeed} onChange={(event) => setMinSpeed(event.target.value)} /></label>
+                <label className="filter-field"><span className="sr-only">Maximum ground speed in knots</span><input type="number" min="0" placeholder="Max speed" value={maxSpeed} onChange={(event) => setMaxSpeed(event.target.value)} /></label>
+              </div>
+            </div>
+          </section>
+
           <div className="section-heading">
             <span>DETECTED AIRCRAFT</span>
             <span className="count-chip">{filteredAircraft.length}</span>
@@ -426,7 +515,7 @@ export default function App() {
                 <span className="empty-symbol">⌕</span>
                 <strong>No aircraft found</strong>
                 <p>
-                  Try a different search or move the map to another area.
+                  Try changing your filters or move the map to another area.
                 </p>
               </div>
             )}
@@ -511,7 +600,7 @@ export default function App() {
                 <span className="toggle-icon">⊙</span>
                 <span>
                   <strong>Airports</strong>
-                  <small>Airport map layer</small>
+                  <small>Major airports and codes</small>
                 </span>
               </span>
               <input

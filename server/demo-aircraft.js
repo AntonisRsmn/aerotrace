@@ -182,7 +182,10 @@ function createAircraft(index, nowSeconds) {
     origin: origin.iata,
     destination: destination.iata,
     // The planned airport-to-airport route is displayed immediately in demo mode.
-    routeCoordinates: isGround ? [] : createRouteCoordinates(origin, destination),
+    routeCoordinates: isGround ? [] : createRouteCoordinates(origin, destination, 160),
+    routeProgress: isGround ? 0 : progress,
+    routeDurationSeconds: duration,
+    routeProgressUpdatedAt: nowSeconds,
     isDemo: true,
   }
 }

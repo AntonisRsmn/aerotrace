@@ -1368,7 +1368,7 @@ const server = createServer(async (request, response) => {
     }
 
     const requestedPath = decodeURIComponent(url.pathname)
-    const relativePath = requestedPath === '/' ? 'index.html' : requestedPath.replace(/^\\/+/, '')
+    const relativePath = requestedPath === '/' ? 'index.html' : requestedPath.slice(1)
     const assetPath = resolve(DIST_DIR, relativePath)
     const distPrefix = DIST_DIR.endsWith(sep) ? DIST_DIR : DIST_DIR + sep
 

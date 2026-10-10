@@ -57,6 +57,25 @@ function categoryFor(
   return 'Unknown'
 }
 
+function detectHelicopter(item: {
+  isHelicopter?: boolean
+  categoryCode?: number | null
+  aircraftType?: string | null
+  category?: string | null
+}): boolean {
+  if (item.isHelicopter === true || Number(item.categoryCode) === 8) {
+    return true
+  }
+
+  const type = `${item.aircraftType ?? ''} ${item.category ?? ''}`
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+
+  // Fallback for feeds that omit OpenSky's emitter category but do provide
+  // an aircraft type/model. These are common helicopter model/type prefixes.
+  return /HELICOPTER|ROTORCRAFT|ROTORWING|^(R22|R44|R66|H125|H130|H135|H145|H160|H175|H215|H225|AS50|AS55|AS65|EC20|EC30|EC35|EC45|EC55|EC75|B06|B47|B06T|B407|B412|B429|B430|S76|S92|AW09|AW10|AW11|AW13|AW16|AW18|AW19|AW20|AW22|AW25|AW30|AW32|AW39|AW60|MD52|MD60|UH60|AH64|CH47|CH53|MI8|MI17|MI24|KA32)/.test(type)
+}
+
 export async function fetchAircraft(
   bounds: MapBounds,
   signal?: AbortSignal,
@@ -110,7 +129,7 @@ export async function fetchAircraft(
       originCountry: item.originCountry,
       onGround: item.onGround,
       categoryCode: item.categoryCode ?? null,
-      isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 8,
+      isHelicopter: detectHelicopter(item),
     })),
   }
 }

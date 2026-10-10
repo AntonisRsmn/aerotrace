@@ -1172,6 +1172,10 @@ export default function MapView({
     )
 
     map.on('load', onLoad)
+
+    // Re-apply the fallback after style changes as MapLibre can recreate
+    // style layers while loading or refreshing the basemap.
+    map.on('styledata', applyDarkMapBackground)
     map.on('moveend', reportBounds)
 
     map.on('error', (event) => {

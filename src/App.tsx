@@ -120,8 +120,13 @@ export default function App() {
     let firstRequest = true
     let controller: AbortController | null = null
 
+    let requestInProgress = false
+
     const refreshAircraft = async () => {
-      controller?.abort()
+      // Never abort a useful live-feed request just because the polling interval
+      // elapsed. OpenSky can take longer than one second to answer.
+      if (requestInProgress) return
+      requestInProgress = true
 
       const currentController = new AbortController()
       controller = currentController
@@ -174,6 +179,7 @@ export default function App() {
             : 'Unable to load aircraft.',
         )
       } finally {
+        requestInProgress = false
         if (active && isFirstRequest) {
           setLoading(false)
         }
@@ -182,9 +188,11 @@ export default function App() {
 
     void refreshAircraft()
 
+    // OpenSky updates more slowly than a one-second UI poll. A 10-second
+    // interval avoids request churn while keeping the map responsive.
     const interval = window.setInterval(() => {
       void refreshAircraft()
-    }, 1000)
+    }, 10_000)
 
     return () => {
       active = false

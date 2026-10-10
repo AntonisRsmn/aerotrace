@@ -23,6 +23,7 @@ type OpenSkyAircraft = {
   squawk: string | null
   lastSeenSeconds: number | null
   isHelicopter?: boolean
+  categoryCode?: number | null
 }
 
 type AircraftResponse = {
@@ -108,7 +109,8 @@ export async function fetchAircraft(
       lastSeenSeconds: item.lastSeenSeconds,
       originCountry: item.originCountry,
       onGround: item.onGround,
-      isHelicopter: Boolean(item.isHelicopter),
+      categoryCode: item.categoryCode ?? null,
+      isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 8,
     })),
   }
 }

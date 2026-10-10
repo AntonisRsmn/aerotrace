@@ -42,6 +42,8 @@ type AircraftResponse = {
   source?: string
   mode?: 'demo' | 'live' | 'hybrid'
   totalSimulated?: number
+  liveAircraftCount?: number
+  liveAvailable?: boolean
   time?: number
   cached?: boolean
   aircraft: OpenSkyAircraft[]

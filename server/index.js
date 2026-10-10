@@ -3,8 +3,17 @@ import { createServer } from 'node:http'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { generateDemoAircraft } from './demo-aircraft.js'
 
 const PORT = Number(process.env.PORT || process.env.API_PORT || 3000)
+
+const AEROTRACE_MODE = ['demo', 'dev'].includes(
+  (process.env.AEROTRACE_MODE || 'live').trim().toLowerCase(),
+) ? 'demo' : 'live'
+const DEMO_AIRCRAFT_COUNT = Math.max(
+  100,
+  Math.min(3000, Number.parseInt(process.env.DEMO_AIRCRAFT_COUNT || '1000', 10) || 1000),
+)
 
 const OPENSKY_API = 'https://opensky-network.org/api'
 const TOKEN_URL =
@@ -1933,6 +1942,16 @@ const server = createServer(async (request, response) => {
     bounds = getBounds(url)
   } catch (error) {
     return sendJson(response, 400, { error: error.message })
+  }
+
+  // Demo mode is intentionally isolated from every live aircraft provider.
+  // Positions are generated locally on each poll; no OpenSky/ADSB calls occur.
+  if (AEROTRACE_MODE === 'demo') {
+    const simulated = generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
+    return sendJson(response, 200, {
+      ...simulated,
+      cached: false,
+    })
   }
 
   const cacheKey = [

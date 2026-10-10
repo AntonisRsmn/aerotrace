@@ -87,6 +87,27 @@ const emptyAirports: FeatureCollection<Point, AirportProperties> = {
   features: [],
 }
 
+function distanceMeters(
+  a: { longitude: number; latitude: number },
+  b: { longitude: number; latitude: number },
+): number {
+  const radians = (degrees: number) => (degrees * Math.PI) / 180
+  const latitude1 = radians(a.latitude)
+  const latitude2 = radians(b.latitude)
+  const latitudeDelta = latitude2 - latitude1
+  const longitudeDelta = radians(b.longitude - a.longitude)
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(latitude1) *
+      Math.cos(latitude2) *
+      Math.sin(longitudeDelta / 2) ** 2
+
+  return 6_371_008.8 * 2 * Math.atan2(
+    Math.sqrt(haversine),
+    Math.sqrt(Math.max(0, 1 - haversine)),
+  )
+}
+
 function parseCsvLine(line: string): string[] {
   const fields: string[] = []
   let field = ''

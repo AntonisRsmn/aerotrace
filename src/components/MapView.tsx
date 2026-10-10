@@ -240,9 +240,7 @@ export default function MapView({
       | undefined
 
     if (source && updates.length > 0) {
-      void source.updateData({ update: updates }).catch((error) => {
-        console.error('[AeroTrace] Could not animate aircraft positions:', error)
-      })
+      source.updateData({ update: updates })
     }
 
     if (aircraftAnimationsRef.current.size > 0) {
@@ -362,9 +360,7 @@ export default function MapView({
     }
 
     if (add.length || remove.length || update.length) {
-      void source.updateData({ add, remove, update }).catch((error) => {
-        console.error('[AeroTrace] Could not update aircraft source:', error)
-      })
+      source.updateData({ add, remove, update })
     }
 
     if (
@@ -719,7 +715,6 @@ export default function MapView({
       map.addSource(AIRCRAFT_SOURCE, {
         type: 'geojson',
         data: emptyAircraft,
-        dynamic: true,
       })
     }
 

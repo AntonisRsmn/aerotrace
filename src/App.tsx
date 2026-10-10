@@ -106,8 +106,11 @@ export default function App() {
   }, [])
 
   const handleSelect = useCallback((id: string) => {
-    setSelectedId(id)
-    setMobilePanel('details')
+    setSelectedId((currentId) => {
+      const nextId = !id || currentId === id ? null : id
+      setMobilePanel(nextId ? 'details' : null)
+      return nextId
+    })
   }, [])
 
   useEffect(() => {

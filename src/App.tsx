@@ -98,6 +98,8 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [source, setSource] = useState('OpenSky Network')
+  const [dataMode, setDataMode] = useState<'demo' | 'live'>('live')
+  const [totalSimulated, setTotalSimulated] = useState<number | null>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const [mobilePanel, setMobilePanel] = useState<'list' | 'details' | null>(
     null,
@@ -169,6 +171,8 @@ export default function App() {
           return result.aircraft
         })
         setSource(result.source)
+        setDataMode(result.mode)
+        setTotalSimulated(result.totalSimulated ?? null)
         setUpdatedAt(result.time)
         setError(null)
       } catch (caught) {
@@ -271,6 +275,23 @@ export default function App() {
       return
     }
 
+    // Demo aircraft already contain generated metadata and routes. Never ask
+    // live metadata providers for details about a simulated aircraft.
+    if (selectedAircraft.isDemo) {
+      setSelectedDetails({
+        registration: selectedAircraft.registration,
+        aircraftType: selectedAircraft.aircraftType,
+        airline: selectedAircraft.airline,
+        origin: selectedAircraft.origin,
+        destination: selectedAircraft.destination,
+        routeAvailable: Boolean(selectedAircraft.origin && selectedAircraft.destination),
+        cached: false,
+      })
+      setDetailsLoading(false)
+      setDetailsError(null)
+      return
+    }
+
     const controller = new AbortController()
     let active = true
 
@@ -347,15 +368,15 @@ export default function App() {
 
         <div className="topbar-status">
           <span className={`status-dot ${error ? 'status-error' : ''}`} />
-          <span>{error ? 'Connection issue' : 'Aircraft feed'}</span>
+          <span>{error ? 'Connection issue' : dataMode === 'demo' ? 'Simulated aircraft feed' : 'Aircraft feed'}</span>
           <span className="status-divider" />
-          <span className="source-label">{source}</span>
+          <span className="source-label">{dataMode === 'demo' ? 'SIMULATED DATA' : source}</span>
         </div>
 
         <div className="topbar-actions">
           <span className="live-pill">
             <span className={`status-dot ${error ? 'status-error' : ''}`} />
-            {loading ? 'CONNECTING' : error ? 'DEGRADED' : 'LIVE'}
+            {loading ? 'CONNECTING' : error ? 'DEGRADED' : dataMode === 'demo' ? 'DEMO DATA' : 'LIVE'}
           </span>
         </div>
       </header>
@@ -690,12 +711,20 @@ export default function App() {
                 </span>
               </div>
 
-              <AircraftPhoto
-                icao24={selectedAircraft.icao24}
-                registration={
-                  selectedDetails?.registration || selectedAircraft.registration
-                }
-              />
+              {selectedAircraft.isDemo ? (
+                <div className="demo-photo-placeholder" role="note">
+                  <span>SIMULATION</span>
+                  <strong>Demo aircraft</strong>
+                  <small>Aircraft details and flight route are simulated. No real photo is available.</small>
+                </div>
+              ) : (
+                <AircraftPhoto
+                  icao24={selectedAircraft.icao24}
+                  registration={
+                    selectedDetails?.registration || selectedAircraft.registration
+                  }
+                />
+              )}
 
               <section className="detail-section">
                 <div className="section-heading section-heading-plain">

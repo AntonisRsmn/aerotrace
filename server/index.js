@@ -668,9 +668,27 @@ async function fetchAircraft(bounds) {
         error,
       })
 
+      const cause =
+        error instanceof Error ? error.cause : undefined
+
       console.warn(
         `[AeroTrace OpenSky] ${account.label} account failed:`,
-        error instanceof Error ? error.message : error,
+        {
+          name: error instanceof Error ? error.name : typeof error,
+          message: error instanceof Error ? error.message : String(error),
+          cause:
+            cause instanceof Error
+              ? {
+                  name: cause.name,
+                  message: cause.message,
+                  code: cause.code,
+                  errno: cause.errno,
+                  syscall: cause.syscall,
+                  hostname: cause.hostname,
+                }
+              : cause ?? null,
+          stack: error instanceof Error ? error.stack : undefined,
+        },
       )
 
       // Continue to the next configured account automatically.

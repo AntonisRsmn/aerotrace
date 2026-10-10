@@ -12,7 +12,7 @@ const TOKEN_URL =
 
 const ADSBDB_API = 'https://api.adsbdb.com/v0'
 
-const CACHE_TTL_MS = 60_000
+const CACHE_TTL_MS = 15_000
 const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000
 const TIMEOUT_COOLDOWN_MS = 60_000
 const DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1000

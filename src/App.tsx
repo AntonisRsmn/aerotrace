@@ -37,6 +37,41 @@ function formatLastSeen(value: number | null) {
   return `${Math.round(value)}s ago`
 }
 
+const routeCardStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) 56px minmax(0, 1fr)',
+  alignItems: 'center',
+  gap: '8px',
+  marginTop: '12px',
+  padding: '16px 12px',
+  background: 'rgba(37, 139, 255, 0.07)',
+  border: '1px solid rgba(88, 169, 255, 0.2)',
+  borderRadius: '10px',
+} as const
+
+const routeEndpointStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '6px',
+  minWidth: 0,
+} as const
+
+const routeLabelStyle = {
+  color: '#7E8DA2',
+  fontSize: '9px',
+  fontFamily: 'var(--mono)',
+  letterSpacing: '0.1em',
+} as const
+
+const routeCodeStyle = {
+  overflow: 'hidden',
+  color: '#E7EDF6',
+  fontSize: '14px',
+  fontWeight: 700,
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+} as const
+
 export default function App() {
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
   const [bounds, setBounds] = useState<MapBounds | null>(null)
@@ -67,7 +102,6 @@ export default function App() {
     setMobilePanel('details')
   }, [])
 
-  // Refresh live aircraft positions. The backend cache limits upstream calls.
   useEffect(() => {
     if (!bounds) return
 
@@ -166,7 +200,6 @@ export default function App() {
     [aircraft, selectedId],
   )
 
-  // Only request metadata for the selected aircraft.
   useEffect(() => {
     if (!selectedAircraft) {
       setSelectedDetails(null)
@@ -222,6 +255,12 @@ export default function App() {
     (item) => item.onGround === true,
   ).length
 
+  const origin =
+    selectedDetails?.origin || selectedAircraft?.origin || null
+
+  const destination =
+    selectedDetails?.destination || selectedAircraft?.destination || null
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -266,6 +305,7 @@ export default function App() {
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}
             showTrails={showTrails}
+            showLabels={showLabels}
           />
         </div>
 
@@ -621,22 +661,48 @@ export default function App() {
                 <div className="section-heading section-heading-plain">
                   <span>FLIGHT ROUTE</span>
                 </div>
-                <div className="detail-line">
-                  <span>Departure</span>
-                  <strong>
-                    {selectedDetails?.origin ||
-                      selectedAircraft.origin ||
-                      'Unavailable'}
-                  </strong>
+
+                <div style={routeCardStyle}>
+                  <div style={routeEndpointStyle}>
+                    <span style={routeLabelStyle}>DEPARTURE</span>
+                    <strong style={routeCodeStyle}>
+                      {origin || 'Unknown'}
+                    </strong>
+                  </div>
+
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '4px',
+                      color: '#58A9FF',
+                    }}
+                  >
+                    <span style={{ fontSize: '18px', lineHeight: 1 }}>✈</span>
+                    <span
+                      style={{
+                        width: '100%',
+                        borderTop: '1px dashed rgba(88, 169, 255, 0.7)',
+                      }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      ...routeEndpointStyle,
+                      alignItems: 'flex-end',
+                      textAlign: 'right',
+                    }}
+                  >
+                    <span style={routeLabelStyle}>DESTINATION</span>
+                    <strong style={routeCodeStyle}>
+                      {destination || 'Unknown'}
+                    </strong>
+                  </div>
                 </div>
-                <div className="detail-line">
-                  <span>Destination</span>
-                  <strong>
-                    {selectedDetails?.destination ||
-                      selectedAircraft.destination ||
-                      'Unavailable'}
-                  </strong>
-                </div>
+
                 <p className="data-disclaimer">
                   {detailsLoading
                     ? 'Looking up aircraft and route information…'

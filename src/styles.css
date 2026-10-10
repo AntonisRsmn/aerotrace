@@ -1517,3 +1517,92 @@ button:disabled {
   }
 
 }
+/* Aircraft photo thumbnails and Flight Inspector photo panel. */
+
+.aircraft-photo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.aircraft-photo--list {
+  flex: 0 0 44px;
+  width: 44px;
+}
+
+.aircraft-photo--inspector {
+  width: auto;
+  gap: 6px;
+  padding: 12px 14px 0;
+}
+
+.aircraft-photo-link {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  background: #111c2a;
+  border: 1px solid rgba(135, 166, 204, 0.18);
+  border-radius: 7px;
+}
+
+.aircraft-photo--list .aircraft-photo-link,
+.aircraft-photo--list .aircraft-photo-fallback {
+  width: 44px;
+  height: 36px;
+}
+
+.aircraft-photo--inspector .aircraft-photo-link,
+.aircraft-photo--inspector .aircraft-photo-fallback {
+  width: 100%;
+  height: 145px;
+  border-radius: 8px;
+}
+
+.aircraft-photo-link img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.aircraft-photo-fallback {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #8cc8ff;
+  background: radial-gradient(
+    circle at 40% 30%,
+    #1d3855,
+    #111c2a
+  );
+  border: 1px solid #293c53;
+  border-radius: 7px;
+  font-size: 20px;
+}
+
+.aircraft-photo--inspector .aircraft-photo-fallback {
+  font-size: 42px;
+}
+
+.aircraft-photo-credit {
+  max-width: 100%;
+  overflow: hidden;
+  color: #71869e;
+  font-size: 9px;
+  line-height: 1.4;
+  text-align: left;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aircraft-photo-credit:hover {
+  color: #8ec7ff;
+  text-decoration: underline;
+}
+
+.aircraft-photo--inspector .aircraft-photo-credit {
+  align-self: flex-start;
+}

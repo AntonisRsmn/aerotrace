@@ -18,6 +18,7 @@ type Props = {
   onSelect: (id: string) => void
   onBoundsChange: (bounds: MapBounds) => void
   showTrails?: boolean
+  showLabels?: boolean
 }
 
 type Position = [number, number]
@@ -35,19 +36,23 @@ type SavedTrack = {
 
 type AircraftProperties = {
   id: string
+  callsign: string
   heading: number
   selected: boolean
+  hovered: boolean
 }
 
 const AIRCRAFT_SOURCE = 'aerotrace-aircraft'
 const AIRCRAFT_GLOW_LAYER = 'aerotrace-aircraft-glow'
 const AIRCRAFT_LAYER = 'aerotrace-aircraft-symbols'
+const AIRCRAFT_LABEL_LAYER = 'aerotrace-aircraft-labels'
 
 const HISTORY_SOURCE = 'aerotrace-history-path'
 const HISTORY_CASING_LAYER = 'aerotrace-history-casing'
 const HISTORY_LAYER = 'aerotrace-history-line'
 
-const PLANE_IMAGE = 'aerotrace-plane-white-v3'
+const PLANE_IMAGE = 'aerotrace-plane-blue-v4'
+const PLANE_IMAGE_HOVER = 'aerotrace-plane-yellow-v4'
 
 const emptyLines: FeatureCollection<LineString> = {
   type: 'FeatureCollection',
@@ -65,6 +70,7 @@ export default function MapView({
   onSelect,
   onBoundsChange,
   showTrails = true,
+  showLabels = true,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
@@ -74,9 +80,11 @@ export default function MapView({
   const onSelectRef = useRef(onSelect)
   const onBoundsChangeRef = useRef(onBoundsChange)
   const showTrailsRef = useRef(showTrails)
+  const showLabelsRef = useRef(showLabels)
 
+  const hoveredIdRef = useRef<string | null>(null)
   const historyRef = useRef<Map<string, Position[]>>(new Map())
-  const imageLoadingRef = useRef(false)
+  const imageLoadingRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     aircraftRef.current = aircraft
@@ -97,6 +105,20 @@ export default function MapView({
   useEffect(() => {
     showTrailsRef.current = showTrails
   }, [showTrails])
+
+  useEffect(() => {
+    showLabelsRef.current = showLabels
+
+    const map = mapRef.current
+
+    if (map?.getLayer(AIRCRAFT_LABEL_LAYER)) {
+      map.setLayoutProperty(
+        AIRCRAFT_LABEL_LAYER,
+        'visibility',
+        showLabels ? 'visible' : 'none',
+      )
+    }
+  }, [showLabels])
 
   function updateAircraftSource(map: maplibregl.Map) {
     if (mapRef.current !== map) return
@@ -128,8 +150,13 @@ export default function MapView({
         type: 'Feature',
         properties: {
           id: item.id,
-          heading: Number.isFinite(item.heading) ? item.heading : 0,
+          callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
+          heading:
+            item.heading != null && Number.isFinite(item.heading)
+              ? item.heading
+              : 0,
           selected: item.id === selectedIdRef.current,
+          hovered: item.id === hoveredIdRef.current,
         },
         geometry: {
           type: 'Point',
@@ -197,16 +224,20 @@ export default function MapView({
     })
   }
 
-  function createPlaneImage(map: maplibregl.Map) {
+  function createPlaneImage(
+    map: maplibregl.Map,
+    imageName: string,
+    fillColor: string,
+  ) {
     if (
       mapRef.current !== map ||
-      map.hasImage(PLANE_IMAGE) ||
-      imageLoadingRef.current
+      map.hasImage(imageName) ||
+      imageLoadingRef.current.has(imageName)
     ) {
       return
     }
 
-    imageLoadingRef.current = true
+    imageLoadingRef.current.add(imageName)
 
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg"
@@ -233,8 +264,8 @@ export default function MapView({
              L25.6 23
              L28.3 9
              C28.9 5.3 29.9 3 32 3 Z"
-          fill="#FFFFFF"
-          stroke="#111827"
+          fill="${fillColor}"
+          stroke="#07111F"
           stroke-width="2.5"
           stroke-linejoin="round"
         />
@@ -251,14 +282,11 @@ export default function MapView({
     image.onload = () => {
       try {
         if (
-          mapRef.current !== map ||
-          !map.isStyleLoaded()
+          mapRef.current === map &&
+          map.isStyleLoaded() &&
+          !map.hasImage(imageName)
         ) {
-          return
-        }
-
-        if (!map.hasImage(PLANE_IMAGE)) {
-          map.addImage(PLANE_IMAGE, image, {
+          map.addImage(imageName, image, {
             pixelRatio: 2,
           })
         }
@@ -269,24 +297,20 @@ export default function MapView({
         )
       } finally {
         URL.revokeObjectURL(url)
-        imageLoadingRef.current = false
+        imageLoadingRef.current.delete(imageName)
       }
 
-      if (
-        mapRef.current === map &&
-        map.isStyleLoaded() &&
-        map.hasImage(PLANE_IMAGE)
-      ) {
+      if (mapRef.current === map && map.isStyleLoaded()) {
         ensureMapLayers(map)
       }
     }
 
     image.onerror = () => {
       URL.revokeObjectURL(url)
-      imageLoadingRef.current = false
+      imageLoadingRef.current.delete(imageName)
 
       console.error(
-        '[AeroTrace] Could not load aircraft icon.',
+        `[AeroTrace] Could not load aircraft icon: ${imageName}`,
       )
     }
 
@@ -301,7 +325,6 @@ export default function MapView({
       return
     }
 
-    // Historical trail source and its two contrasting line layers.
     if (!map.getSource(HISTORY_SOURCE)) {
       map.addSource(HISTORY_SOURCE, {
         type: 'geojson',
@@ -309,7 +332,6 @@ export default function MapView({
       })
     }
 
-    // Dark casing improves contrast against roads and map details.
     if (!map.getLayer(HISTORY_CASING_LAYER)) {
       map.addLayer({
         id: HISTORY_CASING_LAYER,
@@ -327,7 +349,6 @@ export default function MapView({
       })
     }
 
-    // Bright cyan trail sits above the dark casing.
     if (!map.getLayer(HISTORY_LAYER)) {
       map.addLayer({
         id: HISTORY_LAYER,
@@ -353,11 +374,20 @@ export default function MapView({
     }
 
     if (!map.hasImage(PLANE_IMAGE)) {
-      createPlaneImage(map)
+      createPlaneImage(map, PLANE_IMAGE, '#258BFF')
+    }
+
+    if (!map.hasImage(PLANE_IMAGE_HOVER)) {
+      createPlaneImage(map, PLANE_IMAGE_HOVER, '#FFD43B')
+    }
+
+    if (
+      !map.hasImage(PLANE_IMAGE) ||
+      !map.hasImage(PLANE_IMAGE_HOVER)
+    ) {
       return
     }
 
-    // The glow only appears for the selected aircraft.
     if (!map.getLayer(AIRCRAFT_GLOW_LAYER)) {
       map.addLayer({
         id: AIRCRAFT_GLOW_LAYER,
@@ -370,10 +400,10 @@ export default function MapView({
             19,
             0,
           ],
-          'circle-color': '#00D9FF',
-          'circle-opacity': 0.75,
+          'circle-color': '#258BFF',
+          'circle-opacity': 0.6,
           'circle-blur': 0.85,
-          'circle-stroke-color': '#00D9FF',
+          'circle-stroke-color': '#258BFF',
           'circle-stroke-width': 1.5,
           'circle-stroke-opacity': [
             'case',
@@ -391,9 +421,16 @@ export default function MapView({
         type: 'symbol',
         source: AIRCRAFT_SOURCE,
         layout: {
-          'icon-image': PLANE_IMAGE,
+          'icon-image': [
+            'case',
+            ['boolean', ['get', 'hovered'], false],
+            PLANE_IMAGE_HOVER,
+            PLANE_IMAGE,
+          ],
           'icon-size': [
             'case',
+            ['boolean', ['get', 'hovered'], false],
+            0.9,
             ['boolean', ['get', 'selected'], false],
             0.85,
             0.7,
@@ -417,16 +454,65 @@ export default function MapView({
         }
       })
 
-      map.on('mouseenter', AIRCRAFT_LAYER, () => {
+      map.on('mousemove', AIRCRAFT_LAYER, (event) => {
         map.getCanvas().style.cursor = 'pointer'
+
+        const id = event.features?.[0]?.properties?.id
+
+        if (
+          typeof id === 'string' &&
+          hoveredIdRef.current !== id
+        ) {
+          hoveredIdRef.current = id
+          updateAircraftSource(map)
+        }
       })
 
       map.on('mouseleave', AIRCRAFT_LAYER, () => {
         map.getCanvas().style.cursor = ''
+
+        if (hoveredIdRef.current !== null) {
+          hoveredIdRef.current = null
+          updateAircraftSource(map)
+        }
       })
     }
 
-    // Keep aircraft above the glow and the historical trail.
+    if (!map.getLayer(AIRCRAFT_LABEL_LAYER)) {
+      map.addLayer({
+        id: AIRCRAFT_LABEL_LAYER,
+        type: 'symbol',
+        source: AIRCRAFT_SOURCE,
+        layout: {
+          'text-field': ['get', 'callsign'],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+          'text-size': [
+            'case',
+            ['boolean', ['get', 'hovered'], false],
+            12,
+            10,
+          ],
+          'text-anchor': 'bottom',
+          'text-offset': [0, -1.55],
+          'text-max-width': 12,
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+          'visibility': showLabelsRef.current ? 'visible' : 'none',
+        },
+        paint: {
+          'text-color': [
+            'case',
+            ['boolean', ['get', 'hovered'], false],
+            '#FFD43B',
+            '#EAF4FF',
+          ],
+          'text-halo-color': '#07111F',
+          'text-halo-width': 1.5,
+          'text-halo-blur': 0.3,
+        },
+      })
+    }
+
     updateAircraftSource(map)
     updateHistoryPath(map)
   }
@@ -518,12 +604,11 @@ export default function MapView({
         mapRef.current = null
       }
 
-      imageLoadingRef.current = false
+      imageLoadingRef.current.clear()
       map.remove()
     }
   }, [])
 
-  // Keep positions, selection glow, and trail synchronized.
   useEffect(() => {
     const map = mapRef.current
 
@@ -536,9 +621,8 @@ export default function MapView({
     }
 
     ensureMapLayers(map)
-  }, [aircraft, selectedId, showTrails])
+  }, [aircraft, selectedId, showTrails, showLabels])
 
-  // Load saved historical positions for the selected aircraft.
   useEffect(() => {
     if (!selectedId) {
       const map = mapRef.current

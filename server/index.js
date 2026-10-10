@@ -5,29 +5,37 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const PORT = Number(process.env.API_PORT || 3000)
+
 const OPENSKY_API = 'https://opensky-network.org/api'
 const TOKEN_URL =
   'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token'
 
 const ADSBDB_API = 'https://api.adsbdb.com/v0'
 
-const CACHE_TTL_MS = 10_000
+const CACHE_TTL_MS = 60_000
+const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000
+const TIMEOUT_COOLDOWN_MS = 60_000
 const DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const REQUEST_TIMEOUT_MS = 15_000
 const MAX_POINTS_PER_AIRCRAFT = 5000
 const MIN_TRACK_DISTANCE_METERS = 100
 const MIN_TRACK_INTERVAL_SECONDS = 15
 const MAX_TRACKED_AIRCRAFT = 10_000
 const MAX_DETAILS_CACHE_SIZE = 2000
+const MAX_PHOTO_CACHE_SIZE = 2000
 
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data')
 const TRACKS_FILE = join(DATA_DIR, 'tracks.json')
 
-let cachedToken = null
-let tokenExpiresAt = 0
+// Each account has its own token and cooldown.
+const accessTokens = new Map()
+const accountCooldowns = new Map()
 
 const aircraftCache = new Map()
 const aircraftDetailsCache = new Map()
+const aircraftPhotoCache = new Map()
+const aircraftRequestsInFlight = new Map()
 
 let tracks = {}
 let trackWriteQueue = Promise.resolve()
@@ -40,6 +48,69 @@ function sendJson(response, statusCode, body) {
   })
 
   response.end(JSON.stringify(body))
+}
+
+function getOpenSkyAccounts() {
+  const definitions = [
+    {
+      key: 'primary',
+      label: 'primary',
+      clientId: process.env.OPENSKY_CLIENT_ID,
+      clientSecret: process.env.OPENSKY_CLIENT_SECRET,
+    },
+    {
+      key: 'backup',
+      label: 'backup',
+      clientId: process.env.OPENSKY_CLIENT_ID_BACKUP,
+      clientSecret: process.env.OPENSKY_CLIENT_SECRET_BACKUP,
+    },
+  ]
+
+  return definitions.filter(
+    (account) => account.clientId && account.clientSecret,
+  )
+}
+
+function getAccountCooldown(accountKey) {
+  return accountCooldowns.get(accountKey) || 0
+}
+
+function activateAccountCooldown(accountKey, durationMs) {
+  accountCooldowns.set(
+    accountKey,
+    Math.max(
+      getAccountCooldown(accountKey),
+      Date.now() + durationMs,
+    ),
+  )
+}
+
+function createUnavailableError(message, statusCode = 502) {
+  const error = new Error(message)
+  error.statusCode = statusCode
+  return error
+}
+
+function createRateLimitError(retryAfterSeconds = 0) {
+  const error = createUnavailableError(
+    'OpenSky rate limit or API credit limit reached on the available accounts. Please try again later.',
+    429,
+  )
+
+  error.retryAfterSeconds = retryAfterSeconds
+
+  return error
+}
+
+function getRetryAfterSeconds() {
+  const now = Date.now()
+
+  const remaining = [...accountCooldowns.values()]
+    .map((until) => Math.max(0, until - now))
+
+  return remaining.length
+    ? Math.ceil(Math.max(...remaining) / 1000)
+    : 0
 }
 
 function getBounds(url) {
@@ -96,7 +167,6 @@ async function loadTracks() {
 }
 
 function persistTracks() {
-  // Serialize writes so overlapping requests cannot corrupt the JSON file.
   trackWriteQueue = trackWriteQueue
     .then(async () => {
       await mkdir(DATA_DIR, { recursive: true })
@@ -160,7 +230,6 @@ async function recordAircraftPositions(aircraft) {
       const elapsed = timestamp - previous.time
       const distance = distanceMeters(previous, point)
 
-      // Skip repeated positions unless enough time has elapsed.
       if (
         elapsed < MIN_TRACK_INTERVAL_SECONDS &&
         distance < MIN_TRACK_DISTANCE_METERS
@@ -183,7 +252,6 @@ async function recordAircraftPositions(aircraft) {
     changed = true
   }
 
-  // Bound the number of aircraft retained in this local JSON store.
   const ids = Object.keys(tracks)
 
   if (ids.length > MAX_TRACKED_AIRCRAFT) {
@@ -210,18 +278,11 @@ async function recordAircraftPositions(aircraft) {
   }
 }
 
-async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiresAt - 60_000) {
-    return cachedToken
-  }
+async function getAccessToken(account) {
+  const existing = accessTokens.get(account.key)
 
-  const clientId = process.env.OPENSKY_CLIENT_ID
-  const clientSecret = process.env.OPENSKY_CLIENT_SECRET
-
-  if (!clientId || !clientSecret) {
-    const error = new Error('OpenSky credentials are not configured.')
-    error.statusCode = 503
-    throw error
+  if (existing && Date.now() < existing.expiresAt - 60_000) {
+    return existing.token
   }
 
   const response = await fetch(TOKEN_URL, {
@@ -231,38 +292,46 @@ async function getAccessToken() {
     },
     body: new URLSearchParams({
       grant_type: 'client_credentials',
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: account.clientId,
+      client_secret: account.clientSecret,
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
 
   if (!response.ok) {
-    const error = new Error(
-      response.status === 401 || response.status === 403
-        ? 'OpenSky rejected the credentials. Check your client ID and secret.'
-        : `OpenSky authentication failed (${response.status}).`,
-    )
+    if (response.status === 429) {
+      activateAccountCooldown(
+        account.key,
+        RATE_LIMIT_COOLDOWN_MS,
+      )
 
-    error.statusCode = response.status === 429 ? 429 : 502
-    throw error
+      throw createRateLimitError(
+        Math.ceil(RATE_LIMIT_COOLDOWN_MS / 1000),
+      )
+    }
+
+    const message =
+      response.status === 401 || response.status === 403
+        ? `OpenSky rejected the ${account.label} account credentials.`
+        : `OpenSky ${account.label} authentication failed (${response.status}).`
+
+    throw createUnavailableError(message, 502)
   }
 
   const data = await response.json()
 
   if (!data.access_token || !Number.isFinite(data.expires_in)) {
-    const error = new Error(
-      'OpenSky returned an invalid authentication response.',
+    throw createUnavailableError(
+      `OpenSky returned an invalid token for the ${account.label} account.`,
     )
-
-    error.statusCode = 502
-    throw error
   }
 
-  cachedToken = data.access_token
-  tokenExpiresAt = Date.now() + data.expires_in * 1000
+  accessTokens.set(account.key, {
+    token: data.access_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  })
 
-  return cachedToken
+  return data.access_token
 }
 
 function normalizeState(state, nowSeconds) {
@@ -334,8 +403,8 @@ function normalizeState(state, nowSeconds) {
   }
 }
 
-async function fetchAircraft(bounds) {
-  const token = await getAccessToken()
+async function fetchAircraftFromAccount(bounds, account) {
+  const token = await getAccessToken(account)
 
   const query = new URLSearchParams({
     lamin: String(bounds.lamin),
@@ -347,20 +416,29 @@ async function fetchAircraft(bounds) {
   const response = await fetch(
     `${OPENSKY_API}/states/all?${query}`,
     {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     },
   )
 
   if (!response.ok) {
-    const error = new Error(
-      response.status === 429
-        ? 'OpenSky rate limit or API credit limit reached. Try again later.'
-        : `OpenSky aircraft request failed (${response.status}).`,
-    )
+    if (response.status === 429) {
+      activateAccountCooldown(
+        account.key,
+        RATE_LIMIT_COOLDOWN_MS,
+      )
 
-    error.statusCode = response.status === 429 ? 429 : 502
-    throw error
+      throw createRateLimitError(
+        Math.ceil(RATE_LIMIT_COOLDOWN_MS / 1000),
+      )
+    }
+
+    throw createUnavailableError(
+      `OpenSky ${account.label} aircraft request failed (${response.status}).`,
+      502,
+    )
   }
 
   const payload = await response.json()
@@ -374,6 +452,111 @@ async function fetchAircraft(bounds) {
       .map((state) => normalizeState(state, nowSeconds))
       .filter(Boolean),
   }
+}
+
+async function fetchAircraft(bounds) {
+  const accounts = getOpenSkyAccounts()
+
+  if (accounts.length === 0) {
+    throw createUnavailableError(
+      'OpenSky credentials are not configured. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET, or configure the corresponding _BACKUP variables.',
+      503,
+    )
+  }
+
+  const now = Date.now()
+  const errors = []
+  let attemptedAccount = false
+
+  // Try the primary first, then the backup.
+  for (const account of accounts) {
+    const cooldownUntil = getAccountCooldown(account.key)
+
+    if (now < cooldownUntil) {
+      errors.push({
+        account: account.label,
+        error: createRateLimitError(
+          Math.ceil((cooldownUntil - now) / 1000),
+        ),
+      })
+
+      console.warn(
+        `[AeroTrace OpenSky] Skipping ${account.label} account; ` +
+          `cooldown has ${Math.ceil((cooldownUntil - now) / 1000)} seconds remaining.`,
+      )
+
+      continue
+    }
+
+    attemptedAccount = true
+
+    try {
+      const data = await fetchAircraftFromAccount(bounds, account)
+
+      console.info(
+        `[AeroTrace OpenSky] Aircraft data retrieved using ${account.label} account.`,
+      )
+
+      return data
+    } catch (error) {
+      const isTimeout =
+        error?.name === 'TimeoutError' ||
+        error?.name === 'AbortError'
+
+      if (isTimeout) {
+        activateAccountCooldown(
+          account.key,
+          TIMEOUT_COOLDOWN_MS,
+        )
+      }
+
+      errors.push({
+        account: account.label,
+        error,
+      })
+
+      console.warn(
+        `[AeroTrace OpenSky] ${account.label} account failed:`,
+        error instanceof Error ? error.message : error,
+      )
+
+      // Continue to the next configured account automatically.
+    }
+  }
+
+  const lastError = errors[errors.length - 1]?.error
+
+  const allAccountsCoolingDown =
+    accounts.every(
+      (account) => Date.now() < getAccountCooldown(account.key),
+    )
+
+  const anyRateLimited = errors.some(
+    (entry) => entry.error?.statusCode === 429,
+  )
+
+  if (anyRateLimited || allAccountsCoolingDown) {
+    const retryAfterSeconds = getRetryAfterSeconds()
+
+    const error = createRateLimitError(retryAfterSeconds)
+    error.retryAfterSeconds = retryAfterSeconds
+    throw error
+  }
+
+  if (!attemptedAccount && lastError) {
+    throw lastError
+  }
+
+  if (lastError) {
+    throw createUnavailableError(
+      `Both OpenSky accounts failed or are unavailable. Last error: ${lastError.message || 'Unknown error'}`,
+      lastError.statusCode || 502,
+    )
+  }
+
+  throw createUnavailableError(
+    'No OpenSky account could retrieve aircraft data.',
+  )
 }
 
 function airportLabel(airport) {
@@ -396,7 +579,6 @@ function getCachedDetails(key) {
     return null
   }
 
-  // Move recently used entries to the end of the Map.
   aircraftDetailsCache.delete(key)
   aircraftDetailsCache.set(key, entry)
 
@@ -415,6 +597,113 @@ function saveDetails(key, data) {
     if (oldestKey === undefined) break
     aircraftDetailsCache.delete(oldestKey)
   }
+}
+
+/* Aircraft photo lookup and caching. */
+
+function getCachedPhoto(key) {
+  const entry = aircraftPhotoCache.get(key)
+
+  if (!entry) return undefined
+
+  if (Date.now() - entry.cachedAt >= PHOTO_CACHE_TTL_MS) {
+    aircraftPhotoCache.delete(key)
+    return undefined
+  }
+
+  aircraftPhotoCache.delete(key)
+  aircraftPhotoCache.set(key, entry)
+
+  return entry.photo
+}
+
+function saveCachedPhoto(key, photo) {
+  aircraftPhotoCache.delete(key)
+
+  aircraftPhotoCache.set(key, {
+    photo,
+    cachedAt: Date.now(),
+  })
+
+  while (aircraftPhotoCache.size > MAX_PHOTO_CACHE_SIZE) {
+    const oldestKey = aircraftPhotoCache.keys().next().value
+    if (oldestKey === undefined) break
+    aircraftPhotoCache.delete(oldestKey)
+  }
+}
+
+async function lookupAircraftPhoto(icao24, registration) {
+  const endpoints = [
+    `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
+    ...(registration
+      ? [
+          `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
+        ]
+      : []),
+  ]
+
+  for (const endpoint of endpoints) {
+    try {
+      const upstream = await fetch(endpoint, {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent':
+            'AeroTrace/0.1 (+https://github.com/AntonisRsmn/aerotrace)',
+        },
+        signal: AbortSignal.timeout(8000),
+      })
+
+      if (!upstream.ok) continue
+
+      const payload = await upstream.json()
+      const photos = Array.isArray(payload.photos)
+        ? payload.photos
+        : []
+
+      for (const item of photos) {
+        const src =
+          item?.thumbnail_large?.src ||
+          item?.thumbnail?.src
+
+        const link = item?.link
+
+        if (
+          typeof src !== 'string' ||
+          typeof link !== 'string'
+        ) {
+          continue
+        }
+
+        try {
+          if (
+            new URL(src).protocol !== 'https:' ||
+            new URL(link).protocol !== 'https:'
+          ) {
+            continue
+          }
+        } catch {
+          continue
+        }
+
+        return {
+          src,
+          link,
+          photographer:
+            typeof item.photographer === 'string' &&
+            item.photographer.trim()
+              ? item.photographer.trim()
+              : 'Unknown photographer',
+        }
+      }
+    } catch (error) {
+      console.warn(
+        '[AeroTrace aircraft photo]',
+        error instanceof Error ? error.message : error,
+      )
+    }
+  }
+
+  return null
 }
 
 function sendUnavailableDetails(response, statusCode, message) {
@@ -440,13 +729,87 @@ const server = createServer(async (request, response) => {
     return sendJson(response, 400, { error: 'Invalid request URL.' })
   }
 
+  if (
+    request.method === 'GET' &&
+    url.pathname === '/api/aircraft-photo'
+  ) {
+    const icao24 = (
+      url.searchParams.get('icao24') || ''
+    ).trim().toLowerCase()
+
+    const registration = (
+      url.searchParams.get('registration') || ''
+    ).trim().toUpperCase()
+
+    if (!/^[a-f0-9]{6}$/.test(icao24)) {
+      return sendJson(response, 400, {
+        error: 'A valid six-character ICAO24 address is required.',
+        photo: null,
+      })
+    }
+
+    if (
+      registration.length > 12 ||
+      (registration && !/^[A-Z0-9-]+$/.test(registration))
+    ) {
+      return sendJson(response, 400, {
+        error: 'Invalid aircraft registration.',
+        photo: null,
+      })
+    }
+
+    const cacheKey = `${icao24}:${registration}`
+    const cached = getCachedPhoto(cacheKey)
+
+    if (cached !== undefined) {
+      return sendJson(response, 200, {
+        photo: cached,
+        cached: true,
+      })
+    }
+
+    const photo = await lookupAircraftPhoto(
+      icao24,
+      registration,
+    )
+
+    saveCachedPhoto(cacheKey, photo)
+
+    return sendJson(response, 200, {
+      photo,
+      cached: false,
+    })
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/health') {
+    const accounts = getOpenSkyAccounts()
+    const now = Date.now()
+
     return sendJson(response, 200, {
       status: 'ok',
-      credentialsConfigured: Boolean(
-        process.env.OPENSKY_CLIENT_ID &&
-          process.env.OPENSKY_CLIENT_SECRET,
-      ),
+      credentialsConfigured: accounts.length > 0,
+      openSkyAccounts: {
+        primaryConfigured: Boolean(
+          process.env.OPENSKY_CLIENT_ID &&
+            process.env.OPENSKY_CLIENT_SECRET,
+        ),
+        backupConfigured: Boolean(
+          process.env.OPENSKY_CLIENT_ID_BACKUP &&
+            process.env.OPENSKY_CLIENT_SECRET_BACKUP,
+        ),
+        primaryRetryAfterSeconds: Math.max(
+          0,
+          Math.ceil(
+            (getAccountCooldown('primary') - now) / 1000,
+          ),
+        ),
+        backupRetryAfterSeconds: Math.max(
+          0,
+          Math.ceil(
+            (getAccountCooldown('backup') - now) / 1000,
+          ),
+        ),
+      },
     })
   }
 
@@ -515,8 +878,6 @@ const server = createServer(async (request, response) => {
     }
 
     try {
-      // Query by ICAO24 for aircraft identity. Callsign-specific route
-      // data is not guaranteed by every metadata provider response.
       const upstream = await fetch(
         `${ADSBDB_API}/aircraft/${encodeURIComponent(icao24)}`,
         {
@@ -555,7 +916,6 @@ const server = createServer(async (request, response) => {
       const record = payload?.response ?? {}
       const aircraftInfo = record.aircraft ?? {}
 
-      // Route lookup is a separate request using the callsign.
       let route = null
 
       if (callsign) {
@@ -630,7 +990,6 @@ const server = createServer(async (request, response) => {
     return sendJson(response, 400, { error: error.message })
   }
 
-  // Reuse data for nearby map bounds rounded to one decimal place.
   const cacheKey = [
     bounds.lamin,
     bounds.lamax,
@@ -641,32 +1000,77 @@ const server = createServer(async (request, response) => {
     .join(':')
 
   const cached = aircraftCache.get(cacheKey)
+  const now = Date.now()
 
-  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
+  // Return fresh cache data without using either OpenSky account.
+  if (cached && now - cached.cachedAt < CACHE_TTL_MS) {
     return sendJson(response, 200, {
       ...cached.data,
       cached: true,
     })
   }
 
-  try {
-    const data = await fetchAircraft(bounds)
+  // If both accounts are cooling down, use stale data where possible.
+  const accounts = getOpenSkyAccounts()
+  const allAccountsCoolingDown =
+    accounts.length > 0 &&
+    accounts.every(
+      (account) => now < getAccountCooldown(account.key),
+    )
 
-    await recordAircraftPositions(data.aircraft)
-
-    aircraftCache.set(cacheKey, {
-      data,
-      cachedAt: Date.now(),
-    })
-
-    if (aircraftCache.size > 100) {
-      const oldestKey = aircraftCache.keys().next().value
-      if (oldestKey) aircraftCache.delete(oldestKey)
+  if (allAccountsCoolingDown) {
+    if (cached) {
+      return sendJson(response, 200, {
+        ...cached.data,
+        cached: true,
+        stale: true,
+        rateLimited: true,
+        retryAfterSeconds: getRetryAfterSeconds(),
+      })
     }
+
+    return sendJson(response, 429, {
+      error:
+        'Both OpenSky accounts are temporarily unavailable. Please wait before retrying.',
+      retryAfterSeconds: getRetryAfterSeconds(),
+    })
+  }
+
+  // Deduplicate simultaneous requests for identical bounds.
+  let pendingRequest = aircraftRequestsInFlight.get(cacheKey)
+  const joinedExistingRequest = Boolean(pendingRequest)
+
+  if (!pendingRequest) {
+    pendingRequest = (async () => {
+      const data = await fetchAircraft(bounds)
+
+      await recordAircraftPositions(data.aircraft)
+
+      aircraftCache.set(cacheKey, {
+        data,
+        cachedAt: Date.now(),
+      })
+
+      while (aircraftCache.size > 100) {
+        const oldestKey = aircraftCache.keys().next().value
+
+        if (oldestKey === undefined) break
+
+        aircraftCache.delete(oldestKey)
+      }
+
+      return data
+    })()
+
+    aircraftRequestsInFlight.set(cacheKey, pendingRequest)
+  }
+
+  try {
+    const data = await pendingRequest
 
     return sendJson(response, 200, {
       ...data,
-      cached: false,
+      cached: joinedExistingRequest,
     })
   } catch (error) {
     console.error(
@@ -674,15 +1078,42 @@ const server = createServer(async (request, response) => {
       error instanceof Error ? error.message : error,
     )
 
+    // Preserve the map if both accounts fail but cached data exists.
+    if (cached) {
+      return sendJson(response, 200, {
+        ...cached.data,
+        cached: true,
+        stale: true,
+        rateLimited: error.statusCode === 429,
+        ...(error.statusCode === 429
+          ? { retryAfterSeconds: getRetryAfterSeconds() }
+          : {}),
+      })
+    }
+
     return sendJson(response, error.statusCode || 502, {
       error:
         error instanceof Error
           ? error.message
           : 'Unable to retrieve aircraft data.',
+      ...(error.statusCode === 429
+        ? { retryAfterSeconds: getRetryAfterSeconds() }
+        : {}),
     })
+  } finally {
+    if (aircraftRequestsInFlight.get(cacheKey) === pendingRequest) {
+      aircraftRequestsInFlight.delete(cacheKey)
+    }
   }
 })
 
 server.listen(PORT, () => {
   console.log(`AeroTrace API listening on http://localhost:${PORT}`)
+
+  const accounts = getOpenSkyAccounts()
+
+  console.log(
+    `[AeroTrace OpenSky] ${accounts.length} account(s) configured: ` +
+      (accounts.map((account) => account.label).join(', ') || 'none'),
+  )
 })

@@ -32,6 +32,7 @@ type OpenSkyAircraft = {
   origin?: string | null
   destination?: string | null
   isDemo?: boolean
+  routeCoordinates?: [number, number][]
 }
 
 type AircraftResponse = {
@@ -176,6 +177,7 @@ export async function fetchAircraft(
       categoryCode: item.categoryCode ?? null,
       aircraftTypeCode: item.aircraftTypeCode ?? null,
       isDemo: item.isDemo === true,
+      routeCoordinates: item.routeCoordinates ?? [],
       isHelicopter: item.isHelicopter === true || Number(item.categoryCode) === 7 || detectHelicopter(item) || /HELICOPTER|ROTORCRAFT|ROTOR-WING/i.test(item.aircraftType ?? ''),
     })),
   }

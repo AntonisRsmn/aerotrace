@@ -1380,12 +1380,53 @@ const server = createServer(async (request, response) => {
   const cached = aircraftCache.get(cacheKey)
   const now = Date.now()
 
-  // Return fresh cache data without using either OpenSky account.
+  // Fresh cache is served immediately.
   if (cached && now - cached.cachedAt < CACHE_TTL_MS) {
     applyAircraftTypeMetadata(cached.data)
     return sendJson(response, 200, {
       ...cached.data,
       cached: true,
+    })
+  }
+
+  // Stale-while-revalidate: return the last known positions immediately while
+  // refreshing them in the background. The map never waits on OpenSky when a
+  // previous snapshot exists for these bounds.
+  if (cached) {
+    if (!aircraftRequestsInFlight.has(cacheKey)) {
+      const refreshRequest = (async () => {
+        const data = await fetchAircraft(bounds)
+        await recordAircraftPositions(data.aircraft)
+        aircraftCache.set(cacheKey, { data, cachedAt: Date.now() })
+        applyAircraftTypeMetadata(data)
+
+        while (aircraftCache.size > 100) {
+          const oldestKey = aircraftCache.keys().next().value
+          if (oldestKey === undefined) break
+          aircraftCache.delete(oldestKey)
+        }
+        return data
+      })()
+
+      aircraftRequestsInFlight.set(cacheKey, refreshRequest)
+      void refreshRequest.catch((error) => {
+        console.warn(
+          '[AeroTrace background refresh]',
+          error instanceof Error ? error.message : error,
+        )
+      }).finally(() => {
+        if (aircraftRequestsInFlight.get(cacheKey) === refreshRequest) {
+          aircraftRequestsInFlight.delete(cacheKey)
+        }
+      })
+    }
+
+    applyAircraftTypeMetadata(cached.data)
+    return sendJson(response, 200, {
+      ...cached.data,
+      cached: true,
+      stale: true,
+      refreshing: true,
     })
   }
 

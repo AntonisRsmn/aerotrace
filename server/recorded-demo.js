@@ -63,6 +63,9 @@ function flightToTemplate(flight) {
     startTime: Number.isFinite(startTime) ? startTime / 1000 : 0,
     actualDurationSeconds,
     path,
+    groundSpeed: Array.isArray(flight.path_gs) ? flight.path_gs.flat(1).filter((item) => Array.isArray(item) && isNumber(item[1])).map((item) => item[1]) : [],
+    trackHeadings: Array.isArray(flight.path_tracks) ? flight.path_tracks.flat(1).filter((item) => Array.isArray(item) && isNumber(item[1])).map((item) => item[1]) : [],
+    verticalRates: Array.isArray(flight.path_vr) ? flight.path_vr.flat(1).filter((item) => Array.isArray(item) && isNumber(item[1])).map((item) => item[1]) : [],
     squawk: Array.isArray(flight.squawk_runs) ? flight.squawk_runs.flat(2).find((value) => typeof value === 'string' && /^\d{4}$/.test(value)) || null : null,
   }
 }
@@ -161,9 +164,17 @@ function replayFlight(template, index, nowSeconds) {
   const altitude = point.altitudeFt
   const previousAltitude = previous.altitudeFt
   const nextAltitude = next.altitudeFt
-  const verticalRateFpm = altitude == null || previousAltitude == null || nextAltitude == null
-    ? null
-    : Math.round((nextAltitude - previousAltitude) * 30)
+  const verticalRateFpm = template.verticalRates.length
+    ? template.verticalRates[Math.min(template.verticalRates.length - 1, Math.floor(progress * template.verticalRates.length))]
+    : altitude == null || previousAltitude == null || nextAltitude == null
+      ? null
+      : Math.round((nextAltitude - previousAltitude) * 30)
+  const recordedGroundSpeed = template.groundSpeed.length
+    ? template.groundSpeed[Math.min(template.groundSpeed.length - 1, Math.floor(progress * template.groundSpeed.length))]
+    : null
+  const recordedHeading = template.trackHeadings.length
+    ? template.trackHeadings[Math.min(template.trackHeadings.length - 1, Math.floor(progress * template.trackHeadings.length))]
+    : null
   const category = /^(B74|B76|B77F|A30B|A306|DC10|MD11)/.test(template.aircraftType || '')
     ? 'Cargo'
     : /^(H|R22|R44|AS50|AS55|EC)/.test(template.aircraftType || '')
@@ -183,8 +194,8 @@ function replayFlight(template, index, nowSeconds) {
     latitude: Number(point.latitude.toFixed(5)),
     altitudeFt: altitude,
     onGround: isGround,
-    speedKt: 250 + Math.round(seededNumber(`${template.flightId}:speed`) * 220),
-    heading: Math.round(bearing(point, next)) % 360,
+    speedKt: recordedGroundSpeed == null ? 250 + Math.round(seededNumber(`${template.flightId}:speed`) * 220) : Math.round(recordedGroundSpeed),
+    heading: recordedHeading == null ? Math.round(bearing(point, next)) % 360 : Math.round(recordedHeading) % 360,
     verticalRateFpm,
     squawk: template.squawk,
     lastSeenSeconds: 0,

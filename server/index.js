@@ -1,10 +1,10 @@
 
 import { createServer } from 'node:http'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const PORT = Number(process.env.API_PORT || 3000)
+const PORT = Number(process.env.PORT || process.env.API_PORT || 3000)
 
 const OPENSKY_API = 'https://opensky-network.org/api'
 const TOKEN_URL =
@@ -30,6 +30,8 @@ const MAX_PHOTO_CACHE_SIZE = 2000
 const AIRCRAFT_TYPE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TYPE_LOOKUPS_PER_MINUTE = 24
 
+const ROOT_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
+const DIST_DIR = join(ROOT_DIR, 'dist')
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data')
 const TRACKS_FILE = join(DATA_DIR, 'tracks.json')
 
@@ -1354,6 +1356,69 @@ const server = createServer(async (request, response) => {
         'Aircraft details are temporarily unavailable.',
       )
     }
+  }
+
+  // Serve the production Vite build from the same Web Service as the API.
+  // API paths remain API-only; all other GET/HEAD paths use static assets or
+  // the SPA entry point for client-side routes.
+  if (!url.pathname.startsWith('/api/')) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      response.setHeader('Allow', 'GET, HEAD')
+      return sendJson(response, 405, { error: 'Method not allowed.' })
+    }
+
+    const requestedPath = decodeURIComponent(url.pathname)
+    const relativePath = requestedPath === '/' ? 'index.html' : requestedPath.replace(/^\\/+/, '')
+    const assetPath = resolve(DIST_DIR, relativePath)
+    const distPrefix = DIST_DIR.endsWith(sep) ? DIST_DIR : DIST_DIR + sep
+
+    if (assetPath !== DIST_DIR && !assetPath.startsWith(distPrefix)) {
+      return sendJson(response, 403, { error: 'Forbidden path.' })
+    }
+
+    let filePath = assetPath
+    let fileContents
+
+    try {
+      fileContents = await readFile(filePath)
+    } catch (error) {
+      // Missing files and SPA routes should fall back to index.html. Do not
+      // turn missing API endpoints into HTML responses.
+      try {
+        filePath = join(DIST_DIR, 'index.html')
+        fileContents = await readFile(filePath)
+      } catch {
+        return sendJson(response, 503, {
+          error: 'Frontend build not found. Run "npm run build" before starting the server.',
+        })
+      }
+    }
+
+    const contentTypes = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'text/javascript; charset=utf-8',
+      '.mjs': 'text/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.svg': 'image/svg+xml',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif',
+      '.ico': 'image/x-icon',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+      '.ttf': 'font/ttf',
+      '.map': 'application/json; charset=utf-8',
+    }
+
+    response.writeHead(200, {
+      'Content-Type': contentTypes[extname(filePath).toLowerCase()] || 'application/octet-stream',
+      'Cache-Control': extname(filePath).toLowerCase() === '.html' ? 'no-cache' : 'public, max-age=3600',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    return response.end(request.method === 'HEAD' ? undefined : fileContents)
   }
 
   if (request.method !== 'GET' || url.pathname !== '/api/aircraft') {

@@ -388,6 +388,12 @@ export default function MapView({
     const now = performance.now()
 
     for (const item of aircraftRef.current) {
+      // When an aircraft is selected, keep only that aircraft on the map.
+      // The full aircraft list remains in App so clearing selection restores it.
+      if (selectedIdRef.current && item.id !== selectedIdRef.current) {
+        continue
+      }
+
       if (
         !Number.isFinite(item.longitude) ||
         !Number.isFinite(item.latitude) ||

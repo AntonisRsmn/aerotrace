@@ -98,6 +98,8 @@ let airportsDataPromise: Promise<
   FeatureCollection<Point, AirportProperties>
 > | null = null
 
+const airportPositions = new Map<string, Position>()
+
 const emptyAirports: FeatureCollection<Point, AirportProperties> = {
   type: 'FeatureCollection',
   features: [],
@@ -646,6 +648,21 @@ export default function MapView({
     const lastIndex = Math.min(route.length - 1, Math.floor(progress * (route.length - 1)))
     let positions = route.slice(0, lastIndex + 1).map(([longitude, latitude]) => [longitude, latitude] as Position)
 
+    // The archived track may begin after takeoff. If we know the recorded
+    // departure airport, prepend its real coordinates so the history line
+    // visibly starts at the airport rather than at the first ADS-B sample.
+    const originCode = item.origin?.trim().toUpperCase()
+    const originPosition = originCode ? airportPositions.get(originCode) : undefined
+    if (originPosition && positions.length) {
+      const firstRecorded = positions[0]
+      if (
+        Math.abs(originPosition[0] - firstRecorded[0]) > 0.00001 ||
+        Math.abs(originPosition[1] - firstRecorded[1]) > 0.00001
+      ) {
+        positions = [originPosition, ...positions]
+      }
+    }
+
     const currentPosition = aircraftPositionsRef.current.get(item.id) ??
       ([item.longitude, item.latitude] as Position)
     const last = positions[positions.length - 1]
@@ -1004,6 +1021,14 @@ export default function MapView({
                 icao: values[icaoIndex] || '',
               },
             })
+
+            // Keep a lightweight code -> coordinate index so replay trails can
+            // begin at the recorded departure airport.
+            const airportPosition: Position = [longitude, latitude]
+            const iata = values[iataIndex]?.trim().toUpperCase()
+            const icao = values[icaoIndex]?.trim().toUpperCase()
+            if (iata) airportPositions.set(iata, airportPosition)
+            if (icao) airportPositions.set(icao, airportPosition)
           }
 
           return {

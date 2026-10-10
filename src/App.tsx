@@ -1,256 +1,755 @@
-import { useMemo, useState } from 'react'
-import {
-  Activity, ArrowDownRight, ArrowUpRight, ChevronDown, Crosshair, Filter,
-  Globe2, Layers3, Menu, Plane, Radio, Search, Settings2, SlidersHorizontal,
-  X, Zap,
-} from 'lucide-react'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import MapView from './components/MapView'
-import { sampleAircraft } from './data/aircraft'
+import {
+  fetchAircraft,
+  fetchAircraftDetails,
+  type AircraftDetails,
+  type MapBounds,
+} from './api/aircraft'
 import type { Aircraft } from './types'
 
-const categories = ['All aircraft', 'Passenger', 'Cargo', 'Business', 'Military', 'General aviation'] as const
-type CategoryFilter = typeof categories[number]
+function formatNumber(value: number | null | undefined, digits = 0) {
+  if (value == null || !Number.isFinite(value)) return '—'
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US').format(value)
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+  })
 }
 
-function AircraftIcon({ className = '' }: { className?: string }) {
-  return <Plane size={16} className={className} />
+function formatAltitude(value: number | null) {
+  return value == null ? '—' : `${formatNumber(value)} ft`
 }
 
-function App() {
-  const [selectedId, setSelectedId] = useState(sampleAircraft[0].id)
-  const [detailOpen, setDetailOpen] = useState(true)
+function formatSpeed(value: number | null) {
+  return value == null ? '—' : `${formatNumber(value)} kt`
+}
+
+function formatVerticalRate(value: number | null) {
+  if (value == null) return '—'
+  return `${value > 0 ? '+' : ''}${formatNumber(value)} ft/min`
+}
+
+function formatLastSeen(value: number | null) {
+  if (value == null) return '—'
+  if (value < 5) return 'Just now'
+  return `${Math.round(value)}s ago`
+}
+
+export default function App() {
+  const [aircraft, setAircraft] = useState<Aircraft[]>([])
+  const [bounds, setBounds] = useState<MapBounds | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [category, setCategory] = useState<CategoryFilter>('All aircraft')
-  const [mobileListOpen, setMobileListOpen] = useState(false)
-  const [showFilters, setShowFilters] = useState(false)
+  const [showLabels, setShowLabels] = useState(true)
+  const [showTrails, setShowTrails] = useState(true)
+  const [showAirports, setShowAirports] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [source, setSource] = useState('OpenSky Network')
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+  const [mobilePanel, setMobilePanel] = useState<'list' | 'details' | null>(
+    null,
+  )
+
+  const [selectedDetails, setSelectedDetails] =
+    useState<AircraftDetails | null>(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsError, setDetailsError] = useState<string | null>(null)
+
+  const handleBoundsChange = useCallback((nextBounds: MapBounds) => {
+    setBounds(nextBounds)
+  }, [])
+
+  const handleSelect = useCallback((id: string) => {
+    setSelectedId(id)
+    setMobilePanel('details')
+  }, [])
+
+  // Refresh live aircraft positions. The backend cache limits upstream calls.
+  useEffect(() => {
+    if (!bounds) return
+
+    let active = true
+    let firstRequest = true
+    let controller: AbortController | null = null
+
+    const refreshAircraft = async () => {
+      controller?.abort()
+
+      const currentController = new AbortController()
+      controller = currentController
+
+      const isFirstRequest = firstRequest
+      firstRequest = false
+
+      if (isFirstRequest) setLoading(true)
+
+      try {
+        const result = await fetchAircraft(
+          bounds,
+          currentController.signal,
+        )
+
+        if (!active) return
+
+        setAircraft(result.aircraft)
+        setSource(result.source)
+        setUpdatedAt(result.time)
+        setError(null)
+
+        setSelectedId((currentId) => {
+          if (
+            currentId &&
+            result.aircraft.some((item) => item.id === currentId)
+          ) {
+            return currentId
+          }
+
+          return null
+        })
+      } catch (caught) {
+        if (
+          !active ||
+          currentController.signal.aborted ||
+          (caught instanceof Error && caught.name === 'AbortError')
+        ) {
+          return
+        }
+
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : 'Unable to load aircraft.',
+        )
+      } finally {
+        if (active && isFirstRequest) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void refreshAircraft()
+
+    const interval = window.setInterval(() => {
+      void refreshAircraft()
+    }, 1000)
+
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      controller?.abort()
+    }
+  }, [bounds])
 
   const filteredAircraft = useMemo(() => {
     const query = search.trim().toLowerCase()
-    return sampleAircraft.filter((aircraft) => {
-      const categoryMatch = category === 'All aircraft' || aircraft.category === category
-      const searchMatch = !query || [
-        aircraft.callsign, aircraft.registration, aircraft.aircraftType,
-        aircraft.airline, aircraft.origin, aircraft.destination,
-      ].some((value) => value.toLowerCase().includes(query))
-      return categoryMatch && searchMatch
-    })
-  }, [search, category])
 
-  const selectedAircraft = filteredAircraft.find((aircraft) => aircraft.id === selectedId)
-    ?? filteredAircraft[0]
-  const passengerCount = sampleAircraft.filter((item) => item.category === 'Passenger').length
-  const cargoCount = sampleAircraft.filter((item) => item.category === 'Cargo').length
+    if (!query) return aircraft
 
-  function selectAircraft(aircraft: Aircraft) {
-    setSelectedId(aircraft.id)
-    setDetailOpen(true)
-    setMobileListOpen(false)
-  }
+    return aircraft.filter((item) =>
+      [
+        item.callsign,
+        item.icao24,
+        item.registration,
+        item.aircraftType,
+        item.airline,
+        item.originCountry,
+        item.squawk,
+      ].some((value) => value?.toLowerCase().includes(query)),
+    )
+  }, [aircraft, search])
+
+  const selectedAircraft = useMemo(
+    () => aircraft.find((item) => item.id === selectedId) ?? null,
+    [aircraft, selectedId],
+  )
+
+  // Only request metadata for the selected aircraft.
+  useEffect(() => {
+    if (!selectedAircraft) {
+      setSelectedDetails(null)
+      setDetailsLoading(false)
+      setDetailsError(null)
+      return
+    }
+
+    const controller = new AbortController()
+    let active = true
+
+    setSelectedDetails(null)
+    setDetailsLoading(true)
+    setDetailsError(null)
+
+    fetchAircraftDetails(
+      selectedAircraft.icao24,
+      selectedAircraft.callsign,
+      controller.signal,
+    )
+      .then((details) => {
+        if (active) setSelectedDetails(details)
+      })
+      .catch((caught: unknown) => {
+        if (
+          !active ||
+          (caught instanceof Error && caught.name === 'AbortError')
+        ) {
+          return
+        }
+
+        setDetailsError(
+          caught instanceof Error
+            ? caught.message
+            : 'Aircraft details are unavailable.',
+        )
+      })
+      .finally(() => {
+        if (active) setDetailsLoading(false)
+      })
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [selectedAircraft?.icao24, selectedAircraft?.callsign])
+
+  const airborneCount = aircraft.filter(
+    (item) => item.onGround === false,
+  ).length
+
+  const groundCount = aircraft.filter(
+    (item) => item.onGround === true,
+  ).length
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#" aria-label="AeroTrace home">
-          <span className="brand-mark"><Crosshair size={23} strokeWidth={1.8} /></span>
-          <span className="brand-copy">
-            <span className="brand-name">AERO<span>TRACE</span></span>
-            <span className="brand-subtitle">GLOBAL TRAFFIC INTELLIGENCE</span>
-          </span>
-        </a>
+        <div className="brand">
+          <div className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40" fill="none">
+              <path
+                d="M20 5 7 31h8l5-10 5 10h8L20 5Z"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinejoin="round"
+              />
+              <path d="M13 25h14" stroke="currentColor" strokeWidth="2" />
+            </svg>
+          </div>
+          <div>
+            <div className="brand-name">AeroTrace</div>
+            <div className="brand-subtitle">GLOBAL TRACKING SYSTEM</div>
+          </div>
+        </div>
 
-        <div className="topbar-center">
-          <span className="system-dot" />
-          <span>TRACKING SYSTEM</span>
-          <span className="topbar-divider" />
-          <span className="muted">WORLDWIDE VIEW</span>
+        <div className="topbar-status">
+          <span className={`status-dot ${error ? 'status-error' : ''}`} />
+          <span>{error ? 'Connection issue' : 'Aircraft feed'}</span>
+          <span className="status-divider" />
+          <span className="source-label">{source}</span>
         </div>
 
         <div className="topbar-actions">
-          <span className="demo-pill"><span /> DEMO DATA</span>
-          <button className="icon-button" aria-label="Settings (coming soon)" title="Settings coming soon"><Settings2 size={18} /></button>
-          <button className="avatar" aria-label="Profile">AT</button>
+          <span className="live-pill">
+            <span className={`status-dot ${error ? 'status-error' : ''}`} />
+            {loading ? 'CONNECTING' : error ? 'DEGRADED' : 'LIVE'}
+          </span>
         </div>
       </header>
 
-      <section className="workspace">
-        <aside className={`traffic-sidebar ${mobileListOpen ? 'mobile-open' : ''}`}>
-          <div className="sidebar-heading">
+      <section className="dashboard">
+        <div className="map-stage">
+          <MapView
+            aircraft={filteredAircraft}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            onBoundsChange={handleBoundsChange}
+            showTrails={showTrails}
+          />
+        </div>
+
+        <aside
+          className={`sidebar panel ${
+            mobilePanel === 'list' ? 'mobile-panel-open' : ''
+          }`}
+          aria-label="Aircraft search and controls"
+        >
+          <div className="panel-heading">
             <div>
-              <div className="eyebrow">AIRSPACE OVERVIEW</div>
-              <h1>Traffic explorer</h1>
+              <span className="eyebrow">AIRSPACE MONITOR</span>
+              <h1>Aircraft</h1>
+              <p>Traffic in the visible map area</p>
             </div>
-            <button className="icon-button close-mobile" onClick={() => setMobileListOpen(false)} aria-label="Close traffic list"><X size={18} /></button>
+            <button
+              type="button"
+              className="panel-close mobile-only"
+              onClick={() => setMobilePanel(null)}
+              aria-label="Close aircraft panel"
+            >
+              ×
+            </button>
           </div>
 
-          <div className="traffic-stats">
+          <div className="stats-grid">
             <div className="stat-card">
-              <div className="stat-icon blue"><Plane size={16} /></div>
-              <div className="stat-value">{formatNumber(sampleAircraft.length)}</div>
-              <div className="stat-label">AIRCRAFT IN VIEW</div>
-              <div className="stat-foot"><span className="tiny-dot" /> Sample dataset</div>
+              <span className="stat-label">TRACKED</span>
+              <strong>{formatNumber(aircraft.length)}</strong>
+              <span className="stat-caption">Visible aircraft</span>
             </div>
             <div className="stat-card">
-              <div className="stat-icon violet"><Activity size={16} /></div>
-              <div className="stat-value">{passengerCount + cargoCount}</div>
-              <div className="stat-label">AIRLINE TRAFFIC</div>
-              <div className="stat-foot">Passenger & cargo</div>
+              <span className="stat-label">AIRBORNE</span>
+              <strong>{formatNumber(airborneCount)}</strong>
+              <span className="stat-caption">In flight</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">ON GROUND</span>
+              <strong>{formatNumber(groundCount)}</strong>
+              <span className="stat-caption">Ground status known</span>
             </div>
           </div>
 
-          <div className="section-title-row">
-            <div className="section-title">AIRCRAFT <span className="count-chip">{filteredAircraft.length}</span></div>
-            <button className={`subtle-icon ${showFilters ? 'active' : ''}`} onClick={() => setShowFilters(!showFilters)} aria-label="Toggle filters"><SlidersHorizontal size={16} /></button>
-          </div>
+          <label className="search-box">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle
+                cx="10.8"
+                cy="10.8"
+                r="6.8"
+                stroke="currentColor"
+                strokeWidth="1.7"
+              />
+              <path
+                d="m16 16 4.2 4.2"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+              />
+            </svg>
+            <input
+              type="search"
+              placeholder="Callsign, ICAO24, country..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            {search && (
+              <button
+                type="button"
+                className="clear-search"
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+              >
+                ×
+              </button>
+            )}
+          </label>
 
-          <div className="search-box">
-            <Search size={16} />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Callsign, flight, aircraft..." aria-label="Search aircraft" />
-            {search && <button onClick={() => setSearch('')} aria-label="Clear search"><X size={14} /></button>}
-            {!search && <kbd>/</kbd>}
+          <div className="section-heading">
+            <span>DETECTED AIRCRAFT</span>
+            <span className="count-chip">{filteredAircraft.length}</span>
           </div>
-
-          {showFilters && (
-            <div className="filter-panel">
-              <div className="filter-label"><Filter size={13} /> FILTER BY CATEGORY</div>
-              <div className="category-chips">
-                {categories.map((item) => (
-                  <button key={item} className={`category-chip ${category === item ? 'selected' : ''}`} onClick={() => setCategory(item)}>
-                    {item}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           <div className="aircraft-list">
-            {filteredAircraft.map((aircraft) => (
-              <button key={aircraft.id} className={`aircraft-row ${selectedAircraft?.id === aircraft.id ? 'selected' : ''}`} onClick={() => selectAircraft(aircraft)}>
-                <span className="row-plane"><AircraftIcon /></span>
+            {loading && aircraft.length === 0 && (
+              <div className="empty-state">
+                <span className="loading-ring" />
+                <strong>Scanning airspace</strong>
+                <p>Loading aircraft positions…</p>
+              </div>
+            )}
+
+            {!loading && !error && filteredAircraft.length === 0 && (
+              <div className="empty-state">
+                <span className="empty-symbol">⌕</span>
+                <strong>No aircraft found</strong>
+                <p>
+                  Try a different search or move the map to another area.
+                </p>
+              </div>
+            )}
+
+            {error && aircraft.length === 0 && (
+              <div className="empty-state error-state" role="alert">
+                <strong>Feed unavailable</strong>
+                <p>{error}</p>
+                <small>Check that the API server is running on port 3000.</small>
+              </div>
+            )}
+
+            {filteredAircraft.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className={`aircraft-row ${
+                  selectedId === item.id ? 'selected' : ''
+                }`}
+                onClick={() => handleSelect(item.id)}
+              >
+                <span className="row-plane" aria-hidden="true">✈</span>
                 <span className="row-main">
-                  <span className="row-topline"><strong>{aircraft.callsign}</strong><span className="row-alt">{Math.round(aircraft.altitudeFt / 100)} <small>FL</small></span></span>
-                  <span className="row-type">{aircraft.aircraftType}</span>
-                  <span className="row-route">{aircraft.origin.split(' (')[0]} <span>→</span> {aircraft.destination.split(' (')[0]}</span>
+                  <span className="row-topline">
+                    <strong>
+                      {item.callsign || item.icao24.toUpperCase()}
+                    </strong>
+                  </span>
+                  <span className="row-type">
+                    {item.aircraftType ||
+                      item.airline ||
+                      item.originCountry ||
+                      item.icao24.toUpperCase()}
+                  </span>
+                  <span className="row-bottomline">
+                    <span>{formatAltitude(item.altitudeFt)}</span>
+                    <span>{formatSpeed(item.speedKt)}</span>
+                  </span>
                 </span>
-                <ChevronDown className="row-chevron" size={14} />
+                <span className="row-chevron" aria-hidden="true">›</span>
               </button>
             ))}
-            {filteredAircraft.length === 0 && <div className="empty-state">No aircraft match your search.</div>}
           </div>
 
-          <div className="sidebar-footer">
-            <span><span className="tiny-dot" /> SAMPLE POSITIONS</span>
-            <span>NOT LIVE</span>
+          <div className="panel-section">
+            <div className="section-heading section-heading-plain">
+              <span>MAP DISPLAY</span>
+            </div>
+
+            <label className="toggle-row">
+              <span>
+                <span className="toggle-icon">Aa</span>
+                <span>
+                  <strong>Aircraft labels</strong>
+                  <small>Show callsigns on map</small>
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={showLabels}
+                onChange={(event) => setShowLabels(event.target.checked)}
+              />
+            </label>
+
+            <label className="toggle-row">
+              <span>
+                <span className="toggle-icon">⌁</span>
+                <span>
+                  <strong>Flight trails</strong>
+                  <small>Show recorded movement</small>
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={showTrails}
+                onChange={(event) => setShowTrails(event.target.checked)}
+              />
+            </label>
+
+            <label className="toggle-row">
+              <span>
+                <span className="toggle-icon">⊙</span>
+                <span>
+                  <strong>Airports</strong>
+                  <small>Airport map layer</small>
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={showAirports}
+                onChange={(event) => setShowAirports(event.target.checked)}
+              />
+            </label>
           </div>
+
+          <footer className="panel-footer">
+            <span className={`status-dot ${error ? 'status-error' : ''}`} />
+            <span>{error ? 'Feed connection issue' : 'OpenSky data feed'}</span>
+            <span className="footer-spacer" />
+            <span>
+              {loading ? 'Connecting…' : error ? 'Retrying…' : 'Connected'}
+            </span>
+          </footer>
         </aside>
 
-        <section className="map-section">
-          <div className="map-top-controls">
-            <div className="map-location">
-              <span className="location-icon"><Globe2 size={16} /></span>
-              <span><strong>WORLD</strong><small>Global airspace</small></span>
+        <aside
+          className={`details-panel panel ${
+            selectedAircraft ? 'has-selection' : ''
+          } ${mobilePanel === 'details' ? 'mobile-panel-open' : ''}`}
+          aria-label="Selected aircraft details"
+        >
+          <div className="panel-heading details-panel-heading">
+            <div>
+              <span className="eyebrow">FLIGHT INSPECTOR</span>
+              <h2>Aircraft details</h2>
+              <p>Live position and identification</p>
             </div>
-            <div className="map-control-group">
-              <button className="map-control" title="Layers (coming soon)"><Layers3 size={16} /><span>Layers</span><ChevronDown size={13} /></button>
-              <button className="map-control" title="Map filters" onClick={() => setShowFilters(!showFilters)}><Filter size={16} /><span>Filters</span></button>
+            <button
+              type="button"
+              className="panel-close mobile-only"
+              onClick={() => setMobilePanel(null)}
+              aria-label="Close details panel"
+            >
+              ×
+            </button>
+          </div>
+
+          {!selectedAircraft ? (
+            <div className="details-empty">
+              <div className="empty-plane" aria-hidden="true">✈</div>
+              <strong>Select an aircraft</strong>
+              <p>
+                Choose an aircraft from the list or click a marker on the map
+                to inspect its live data.
+              </p>
             </div>
-          </div>
-
-          <MapView aircraft={filteredAircraft} selectedId={selectedAircraft?.id ?? ''} onSelect={selectAircraft} />
-
-          <div className="map-legend">
-            <span className="legend-item"><i className="legend-plane passenger">✈</i> Passenger</span>
-            <span className="legend-item"><i className="legend-plane cargo">✈</i> Cargo</span>
-            <span className="legend-item"><i className="legend-plane other">✈</i> Other</span>
-          </div>
-
-          <div className="map-bottom-left">
-            <span className="coords"><Crosshair size={13} /> GLOBAL VIEW</span>
-            <span className="bottom-separator" />
-            <span className="map-provider">MAPLIBRE</span>
-          </div>
-
-          <button className="mobile-list-toggle" onClick={() => setMobileListOpen(true)}><Menu size={17} /> Traffic list <span>{filteredAircraft.length}</span></button>
-
-          {selectedAircraft && detailOpen && (
-            <aside className="detail-panel">
-              <div className="detail-header">
-                <div>
-                  <div className="eyebrow">SELECTED TARGET</div>
-                  <h2>{selectedAircraft.callsign}</h2>
-                  <div className="detail-registration">{selectedAircraft.registration} <span className="detail-dot" /> {selectedAircraft.category.toUpperCase()}</div>
-                </div>
-                <button className="icon-button" onClick={() => setDetailOpen(false)} aria-label="Close selected aircraft panel"><X size={17} /></button>
-              </div>
-
-              <div className="detail-aircraft-visual">
-                <div className="aircraft-visual-glow" />
-                <div className="big-plane" style={{ transform: `rotate(${selectedAircraft.heading}deg)` }}><Plane size={52} strokeWidth={1.1} /></div>
-                <div className="visual-type">{selectedAircraft.aircraftType}</div>
-                <div className="visual-airline">{selectedAircraft.airline}</div>
-              </div>
-
-              <div className="detail-metrics">
-                <div className="metric">
-                  <span className="metric-label">ALTITUDE</span>
-                  <strong>{formatNumber(selectedAircraft.altitudeFt)} <small>FT</small></strong>
-                  <span className="metric-note">FL{Math.round(selectedAircraft.altitudeFt / 100)}</span>
-                </div>
-                <div className="metric">
-                  <span className="metric-label">GROUND SPEED</span>
-                  <strong>{selectedAircraft.speedKt} <small>KT</small></strong>
-                  <span className="metric-note">{Math.round(selectedAircraft.speedKt * 1.852)} km/h</span>
-                </div>
-                <div className="metric">
-                  <span className="metric-label">HEADING</span>
-                  <strong>{String(selectedAircraft.heading).padStart(3, '0')}<small>°</small></strong>
-                  <span className="metric-note">Magnetic-style demo</span>
-                </div>
-                <div className="metric">
-                  <span className="metric-label">VERTICAL RATE</span>
-                  <strong className="vertical-rate">{selectedAircraft.verticalRateFpm > 0 ? <ArrowUpRight size={17} /> : selectedAircraft.verticalRateFpm < 0 ? <ArrowDownRight size={17} /> : null}{selectedAircraft.verticalRateFpm > 0 ? '+' : ''}{selectedAircraft.verticalRateFpm} <small>FPM</small></strong>
-                  <span className="metric-note">{selectedAircraft.verticalRateFpm > 0 ? 'Climbing' : selectedAircraft.verticalRateFpm < 0 ? 'Descending' : 'Level flight'}</span>
+          ) : (
+            <div className="details-content">
+              <div className="selected-aircraft-title">
+                <div className="selected-plane-icon" aria-hidden="true">✈</div>
+                <div className="selected-title-text">
+                  <h3>{selectedAircraft.callsign || 'Unknown callsign'}</h3>
+                  <p>
+                    {selectedDetails?.aircraftType ||
+                      selectedAircraft.aircraftType ||
+                      selectedDetails?.airline ||
+                      selectedAircraft.airline ||
+                      'Aircraft type unavailable'}
+                  </p>
                 </div>
               </div>
 
-              <div className="detail-section">
-                <div className="detail-section-heading">FLIGHT INFORMATION <span>01 / 02</span></div>
-                <div className="route-visual">
-                  <div className="route-point"><span className="route-ring" /><div><strong>{selectedAircraft.origin.split(' (')[0]}</strong><small>{selectedAircraft.origin.match(/\((.*?)\)/)?.[1] ?? '—'}</small></div></div>
-                  <div className="route-line"><span /><span /><span /><span /><span /></div>
-                  <div className="route-point destination"><span className="route-ring" /><div><strong>{selectedAircraft.destination.split(' (')[0]}</strong><small>{selectedAircraft.destination.match(/\((.*?)\)/)?.[1] ?? '—'}</small></div></div>
-                </div>
+              <div className="details-badges">
+                <span
+                  className={`detail-badge ${
+                    selectedAircraft.onGround === true
+                      ? 'ground-badge'
+                      : selectedAircraft.onGround === false
+                        ? 'airborne-badge'
+                        : ''
+                  }`}
+                >
+                  <span className="badge-dot" />
+                  {selectedAircraft.onGround === true
+                    ? 'On ground'
+                    : selectedAircraft.onGround === false
+                      ? 'Airborne'
+                      : 'Status unknown'}
+                </span>
+                <span className="detail-badge">
+                  {selectedAircraft.category}
+                </span>
               </div>
 
-              <div className="detail-section">
-                <div className="detail-section-heading">AIRCRAFT DETAILS <span>02 / 02</span></div>
-                <div className="info-grid">
-                  <div><span>Operator</span><strong>{selectedAircraft.airline}</strong></div>
-                  <div><span>Aircraft type</span><strong>{selectedAircraft.aircraftType}</strong></div>
-                  <div><span>Transponder</span><strong>{selectedAircraft.squawk}</strong></div>
-                  <div><span>Position age</span><strong>{selectedAircraft.lastSeenSeconds}s <small>ago</small></strong></div>
-                  <div><span>Latitude</span><strong>{selectedAircraft.latitude.toFixed(4)}°</strong></div>
-                  <div><span>Longitude</span><strong>{selectedAircraft.longitude.toFixed(4)}°</strong></div>
+              <section className="detail-section">
+                <div className="section-heading section-heading-plain">
+                  <span>FLIGHT DATA</span>
                 </div>
-              </div>
+                <div className="detail-grid">
+                  <div className="detail-metric">
+                    <span>Altitude</span>
+                    <strong>{formatAltitude(selectedAircraft.altitudeFt)}</strong>
+                  </div>
+                  <div className="detail-metric">
+                    <span>Ground speed</span>
+                    <strong>{formatSpeed(selectedAircraft.speedKt)}</strong>
+                  </div>
+                  <div className="detail-metric">
+                    <span>Heading</span>
+                    <strong>
+                      {selectedAircraft.heading == null
+                        ? '—'
+                        : `${formatNumber(selectedAircraft.heading)}°`}
+                    </strong>
+                  </div>
+                  <div className="detail-metric">
+                    <span>Vertical rate</span>
+                    <strong>
+                      {formatVerticalRate(selectedAircraft.verticalRateFpm)}
+                    </strong>
+                  </div>
+                </div>
+              </section>
 
-              <div className="detail-disclaimer"><Radio size={14} /><span>Fictional demonstration data. No live telemetry is connected.</span></div>
-            </aside>
+              <section className="detail-section">
+                <div className="section-heading section-heading-plain">
+                  <span>IDENTIFICATION</span>
+                </div>
+                <div className="detail-line">
+                  <span>ICAO24</span>
+                  <strong>{selectedAircraft.icao24.toUpperCase()}</strong>
+                </div>
+                <div className="detail-line">
+                  <span>Registration</span>
+                  <strong>
+                    {selectedDetails?.registration ||
+                      selectedAircraft.registration ||
+                      'Unavailable'}
+                  </strong>
+                </div>
+                <div className="detail-line">
+                  <span>Aircraft type</span>
+                  <strong>
+                    {selectedDetails?.aircraftType ||
+                      selectedAircraft.aircraftType ||
+                      'Unavailable'}
+                  </strong>
+                </div>
+                <div className="detail-line">
+                  <span>Airline / operator</span>
+                  <strong>
+                    {selectedDetails?.airline ||
+                      selectedAircraft.airline ||
+                      'Unavailable'}
+                  </strong>
+                </div>
+                <div className="detail-line">
+                  <span>Country</span>
+                  <strong>
+                    {selectedAircraft.originCountry || 'Unavailable'}
+                  </strong>
+                </div>
+                <div className="detail-line">
+                  <span>Squawk</span>
+                  <strong>{selectedAircraft.squawk || 'Unavailable'}</strong>
+                </div>
+                <div className="detail-line">
+                  <span>Last contact</span>
+                  <strong>
+                    {formatLastSeen(selectedAircraft.lastSeenSeconds)}
+                  </strong>
+                </div>
+              </section>
+
+              <section className="detail-section">
+                <div className="section-heading section-heading-plain">
+                  <span>FLIGHT ROUTE</span>
+                </div>
+                <div className="detail-line">
+                  <span>Departure</span>
+                  <strong>
+                    {selectedDetails?.origin ||
+                      selectedAircraft.origin ||
+                      'Unavailable'}
+                  </strong>
+                </div>
+                <div className="detail-line">
+                  <span>Destination</span>
+                  <strong>
+                    {selectedDetails?.destination ||
+                      selectedAircraft.destination ||
+                      'Unavailable'}
+                  </strong>
+                </div>
+                <p className="data-disclaimer">
+                  {detailsLoading
+                    ? 'Looking up aircraft and route information…'
+                    : detailsError
+                      ? 'Route lookup is temporarily unavailable.'
+                      : selectedDetails?.routeAvailable
+                        ? 'Route supplied by an external metadata source. It may not represent the aircraft’s current clearance.'
+                        : 'No route record found. The aircraft may still be in flight.'}
+                </p>
+              </section>
+
+              <section className="detail-section">
+                <div className="section-heading section-heading-plain">
+                  <span>POSITION</span>
+                </div>
+                <div className="detail-line">
+                  <span>Latitude</span>
+                  <strong>{selectedAircraft.latitude.toFixed(5)}°</strong>
+                </div>
+                <div className="detail-line">
+                  <span>Longitude</span>
+                  <strong>{selectedAircraft.longitude.toFixed(5)}°</strong>
+                </div>
+              </section>
+
+              <p className="data-disclaimer">
+                The recorded trail begins when AeroTrace observes the aircraft.
+                The blue line is a heading-based estimate, not a confirmed route.
+                Registration, aircraft type, airline and route details may not
+                be available in every response.
+              </p>
+            </div>
           )}
 
-          <div className="map-statusbar">
-            <span><span className="status-dot" /> SYSTEM READY</span>
-            <span className="status-divider" />
-            <span><Zap size={12} /> {filteredAircraft.length} TARGETS</span>
-            <span className="status-spacer" />
-            <span>DATA SOURCE: SIMULATED</span>
+          <footer className="details-footer">
+            <span>DATA SOURCE</span>
+            <strong>{source}</strong>
+            <span className="footer-spacer" />
+            <span>
+              {updatedAt
+                ? new Date(updatedAt * 1000).toLocaleTimeString()
+                : 'Waiting for data'}
+            </span>
+          </footer>
+        </aside>
+
+        <div className="map-top-label">
+          <span className="map-top-label-icon">◎</span>
+          <span>
+            <strong>GLOBAL AIRSPACE</strong>
+            <small>Worldwide coverage</small>
+          </span>
+        </div>
+
+        <div className="map-legend">
+          <span><i className="legend-dot airborne" /> Airborne</span>
+          <span><i className="legend-dot grounded" /> On ground</span>
+          <span><i className="legend-line projected" /> Projected path</span>
+          <span><i className="legend-line historical" /> Recorded trail</span>
+        </div>
+
+        {loading && aircraft.length > 0 && (
+          <div className="map-refresh-indicator">
+            <span className="status-dot" />
+            Connecting to aircraft feed…
           </div>
-        </section>
+        )}
+
+        {error && aircraft.length > 0 && (
+          <div className="map-message" role="status">
+            <span className="status-dot status-error" />
+            Refresh failed: {error}
+          </div>
+        )}
+
+        <button
+          type="button"
+          className="mobile-list-toggle"
+          onClick={() =>
+            setMobilePanel((current) =>
+              current === 'list' ? null : 'list',
+            )
+          }
+        >
+          Aircraft <span>{filteredAircraft.length}</span>
+        </button>
+
+        {selectedAircraft && (
+          <button
+            type="button"
+            className="mobile-details-toggle"
+            onClick={() =>
+              setMobilePanel((current) =>
+                current === 'details' ? null : 'details',
+              )
+            }
+          >
+            Selected: {selectedAircraft.callsign || selectedAircraft.icao24}
+          </button>
+        )}
+
+        <div className="map-attribution">
+          <span>Source: {source}</span>
+          <span>•</span>
+          <span>
+            {updatedAt
+              ? `Updated ${new Date(updatedAt * 1000).toLocaleTimeString()}`
+              : 'Waiting for first update'}
+          </span>
+          <span>•</span>
+          <span>Positions may be delayed</span>
+        </div>
       </section>
     </main>
   )
 }
-
-export default App

@@ -52,6 +52,7 @@ type AircraftProperties = {
   hovered: boolean
   isHelicopter: boolean
   categoryCode: number | null
+  aircraftTypeCode: string | null
 }
 
 type AirportProperties = {
@@ -77,8 +78,8 @@ const LIVE_TRAIL_LAYER = 'aerotrace-live-trail-line'
 
 const PLANE_IMAGE = 'aerotrace-plane-blue-v4'
 const PLANE_IMAGE_HOVER = 'aerotrace-plane-yellow-v4'
-const HELICOPTER_IMAGE = 'aerotrace-helicopter-blue-v2'
-const HELICOPTER_IMAGE_HOVER = 'aerotrace-helicopter-yellow-v2'
+const HELICOPTER_IMAGE = 'aerotrace-helicopter-blue-v3'
+const HELICOPTER_IMAGE_HOVER = 'aerotrace-helicopter-yellow-v3'
 
 const emptyLines: FeatureCollection<LineString> = {
   type: 'FeatureCollection',
@@ -456,6 +457,7 @@ export default function MapView({
           id === selectedIdRef.current || id === hoveredIdRef.current,
         isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 8 || /HELICOPTER|ROTORCRAFT|ROTORWING/i.test(`${item.aircraftType ?? ''} ${item.category ?? ''}`),
         categoryCode: item.categoryCode ?? null,
+        aircraftTypeCode: item.aircraftTypeCode ?? null,
       }
 
       nextIds.add(id)
@@ -501,6 +503,7 @@ export default function MapView({
           { key: 'hovered', value: properties.hovered },
           { key: 'isHelicopter', value: properties.isHelicopter },
           { key: 'categoryCode', value: properties.categoryCode },
+          { key: 'aircraftTypeCode', value: properties.aircraftTypeCode },
         ],
       })
 
@@ -768,27 +771,28 @@ export default function MapView({
 
     imageLoadingRef.current.add(imageName)
 
-    // Recognizable top-down helicopter: four-blade main rotor, cabin,
-    // narrow tail boom and a separate tail rotor.
+    // Distinct top-down rotorcraft silhouette: circular main-rotor area,
+    // long narrow tail boom, tail stabilizer and a separate tail rotor.
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-        <g stroke="#07111F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">
-          <path d="M32 7 V37 M10 22 H54" />
-          <path d="M32 34 V55" />
-          <path d="M25 55 H39 M32 48 V62" />
+        <g stroke="#07111F" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M32 5 V37 M9 21 H55" />
+          <path d="M32 36 V57 M24 56 H40" />
+          <path d="M27 51 L37 51" />
         </g>
-        <g stroke="${fillColor}" stroke-width="2.6" stroke-linecap="round" fill="none">
-          <path d="M32 5 V39 M7 22 H57" />
-          <path d="M32 36 V55" />
-          <path d="M25 55 H39 M32 48 V62" />
+        <g stroke="${fillColor}" stroke-width="3" stroke-linecap="round" fill="none">
+          <path d="M32 4 V37 M8 21 H56" />
+          <path d="M32 36 V57 M24 56 H40" />
         </g>
-        <path d="M32 10 C39 10 42 17 42 25 V34 C42 39 37 43 32 43 C27 43 22 39 22 34 V25 C22 17 25 10 32 10 Z"
+        <circle cx="32" cy="21" r="13" fill="none" stroke="${fillColor}" stroke-width="2.5" />
+        <path d="M32 11 C39 11 41 17 41 25 V33 C41 39 37 43 32 43 C27 43 23 39 23 33 V25 C23 17 25 11 32 11 Z"
           fill="${fillColor}" stroke="#07111F" stroke-width="3" />
-        <path d="M25 20 Q32 14 39 20 L38 27 H26 Z"
+        <path d="M25 20 Q32 15 39 20 L38 27 H26 Z"
           fill="#D9F2FF" stroke="#07111F" stroke-width="2" />
-        <path d="M27 42 H37 L35 53 H29 Z"
+        <path d="M28 43 H36 L35 54 H29 Z"
           fill="${fillColor}" stroke="#07111F" stroke-width="2.5" />
-        <circle cx="32" cy="22" r="2.5" fill="#FFFFFF" />
+        <circle cx="32" cy="21" r="3.2" fill="#FFFFFF" stroke="#07111F" stroke-width="1.5" />
+        <path d="M24 56 L40 56" stroke="${fillColor}" stroke-width="3.5" stroke-linecap="round" />
       </svg>
     `
 
@@ -1118,6 +1122,15 @@ export default function MapView({
             ['any',
               ['boolean', ['get', 'isHelicopter'], false],
               ['==', ['to-number', ['get', 'categoryCode'], -1], 8],
+              ['match', ['upcase', ['to-string', ['get', 'aircraftTypeCode']]], [
+                'A109', 'A119', 'A139', 'A169', 'A189', 'AS32', 'AS50', 'AS55', 'AS65',
+                'B06', 'B06T', 'B47G', 'B407', 'B412', 'B429', 'B430', 'BK17', 'BK11',
+                'CH47', 'CH53', 'EC20', 'EC25', 'EC30', 'EC35', 'EC45', 'EC55', 'EC75',
+                'H120', 'H125', 'H130', 'H135', 'H145', 'H160', 'H175', 'H215', 'H225',
+                'MD52', 'MD60', 'MI8', 'MI17', 'MI24', 'R22', 'R44', 'R66', 'S61', 'S76',
+                'S92', 'UH60', 'AW09', 'AW10', 'AW11', 'AW13', 'AW16', 'AW18', 'AW19',
+                'AW20', 'AW22', 'AW25', 'AW30', 'AW32', 'AW39', 'AW60'
+              ], true, false],
             ],
             [
               'case',

@@ -311,6 +311,30 @@ export default function MapView({
     return extrapolateFromLatestObservation()
   }
 
+  function appendAircraftHistory(id: string, position: Position) {
+    const existing = historyRef.current.get(id) ?? []
+    const last = existing[existing.length - 1]
+
+    // Only append a point after the aircraft has actually moved.
+    if (
+      last &&
+      Math.abs(last[0] - position[0]) < 0.000001 &&
+      Math.abs(last[1] - position[1]) < 0.000001
+    ) {
+      return
+    }
+
+    existing.push(position)
+
+    // Keep a bounded in-memory trail so a long demo session cannot grow
+    // memory usage indefinitely.
+    if (existing.length > 240) {
+      existing.splice(0, existing.length - 240)
+    }
+
+    historyRef.current.set(id, existing)
+  }
+
   function addPositionObservation(id: string, position: Position, time: number) {
     const existing = positionBufferRef.current.get(id) ?? []
     const last = existing[existing.length - 1]
@@ -519,6 +543,7 @@ export default function MapView({
           target,
           Date.now() - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
         )
+        if (item.isDemo) appendAircraftHistory(id, target)
         continue
       }
 
@@ -564,6 +589,7 @@ export default function MapView({
         target,
         Date.now() - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
       )
+      if (item.isDemo) appendAircraftHistory(id, target)
     }
 
     for (const id of aircraftPositionsRef.current.keys()) {

@@ -1568,6 +1568,21 @@ const server = createServer(async (request, response) => {
     return sendJson(response, 400, { error: 'Invalid request URL.' })
   }
 
+  // Serve provider images through the backend so the browser does not hit
+  // hotlinking/CORS restrictions. proxyAircraftPhotoImage validates the host.
+  if (
+    request.method === 'GET' &&
+    url.pathname === '/api/aircraft-photo-image'
+  ) {
+    const imageUrl = url.searchParams.get('url')
+
+    if (!imageUrl) {
+      return sendJson(response, 400, { error: 'An image URL is required.' })
+    }
+
+    return proxyAircraftPhotoImage(imageUrl, response)
+  }
+
   if (
     request.method === 'GET' &&
     url.pathname === '/api/aircraft-photo'

@@ -24,6 +24,9 @@ type OpenSkyAircraft = {
   lastSeenSeconds: number | null
   isHelicopter?: boolean
   categoryCode?: number | null
+  registration?: string | null
+  aircraftType?: string | null
+  aircraftTypeCode?: string | null
 }
 
 type AircraftResponse = {
@@ -112,8 +115,8 @@ export async function fetchAircraft(
       id: item.icao24,
       icao24: item.icao24,
       callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
-      registration: null,
-      aircraftType: null,
+      registration: item.registration ?? null,
+      aircraftType: item.aircraftType ?? null,
       category: categoryFor(item.onGround),
       airline: null,
       origin: null,
@@ -129,7 +132,8 @@ export async function fetchAircraft(
       originCountry: item.originCountry,
       onGround: item.onGround,
       categoryCode: item.categoryCode ?? null,
-      isHelicopter: detectHelicopter(item),
+      aircraftTypeCode: item.aircraftTypeCode ?? null,
+      isHelicopter: detectHelicopter(item) || /HELICOPTER|ROTORCRAFT|ROTOR-WING/i.test(item.aircraftType ?? ''),
     })),
   }
 }

@@ -217,51 +217,12 @@ export default function MapView({
       heading: number | null
       onGround: boolean | null
     },
-    now: number,
   ): Position {
-    const elapsedSeconds = Math.min(55, Math.max(0, (now - motion.observedAt) / 1000))
-    const speedKt = motion.speedKt
-    const heading = motion.heading
-
-    // Dead-reckoning is display-only, limited to 55 seconds between observations.
-    // It uses reported speed/heading and is corrected whenever a new observed
-    // position arrives; the saved trail continues to use observed points only.
-    if (
-      elapsedSeconds <= 0 ||
-      elapsedSeconds >= 55 ||
-      motion.onGround === true ||
-      speedKt == null ||
-      !Number.isFinite(speedKt) ||
-      speedKt < 30 ||
-      heading == null ||
-      !Number.isFinite(heading)
-    ) {
-      return motion.observedPosition
-    }
-
-    const earthRadiusMeters = 6_371_008.8
-    const distanceMeters = (speedKt * 1852 * elapsedSeconds) / 3600
-    const angularDistance = distanceMeters / earthRadiusMeters
-    const bearing = (heading * Math.PI) / 180
-    const latitude1 = (motion.observedPosition[1] * Math.PI) / 180
-    const longitude1 = (motion.observedPosition[0] * Math.PI) / 180
-
-    const latitude2 = Math.asin(
-      Math.sin(latitude1) * Math.cos(angularDistance) +
-        Math.cos(latitude1) * Math.sin(angularDistance) * Math.cos(bearing),
-    )
-    const longitude2 =
-      longitude1 +
-      Math.atan2(
-        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(latitude1),
-        Math.cos(angularDistance) - Math.sin(latitude1) * Math.sin(latitude2),
-      )
-
-    let longitude = (longitude2 * 180) / Math.PI
-    if (longitude > 180) longitude -= 360
-    if (longitude < -180) longitude += 360
-
-    return [longitude, (latitude2 * 180) / Math.PI]
+    // Use reported coordinates only. Speed/heading dead-reckoning made aircraft
+    // drift forward between feed updates, then snap backward when OpenSky sent
+    // the next observed position. Interpolation below smooths observed updates
+    // without displaying invented coordinates.
+    return motion.observedPosition
   }
 
   function animateAircraftFrame(map: maplibregl.Map) {
@@ -285,7 +246,7 @@ export default function MapView({
     const updates: Array<{ id: string; newGeometry: Point }> = []
 
     for (const [id, motion] of aircraftMotionRef.current) {
-      const projected = projectAircraftPosition(motion, frameTime)
+      const projected = projectAircraftPosition(motion)
       const animation = aircraftAnimationsRef.current.get(id)
       let position = projected
 
@@ -349,18 +310,8 @@ export default function MapView({
       updateLiveTrail(map)
     }
 
-    // Continue while any transition is active or an aircraft can still be
-    // projected forward from its last observed position.
-    const hasMovingAircraft = Array.from(aircraftMotionRef.current.values()).some(
-      (motion) =>
-        motion.onGround !== true &&
-        motion.speedKt != null &&
-        motion.speedKt >= 30 &&
-        motion.heading != null &&
-        frameTime - motion.observedAt < 55_000,
-    )
-
-    if (aircraftAnimationsRef.current.size > 0 || hasMovingAircraft) {
+    // Continue rendering only while an observed-position transition is active.
+    if (aircraftAnimationsRef.current.size > 0) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -491,7 +442,7 @@ export default function MapView({
           aircraftAnimationsRef.current.set(id, {
             from,
             start: now,
-            duration: 1400,
+            duration: 900,
           })
         }
       } else if (motion) {
@@ -516,17 +467,8 @@ export default function MapView({
       source.updateData({ add, remove, update })
     }
 
-    const hasMovingAircraft = Array.from(aircraftMotionRef.current.values()).some(
-      (motion) =>
-        motion.onGround !== true &&
-        motion.speedKt != null &&
-        motion.speedKt >= 30 &&
-        motion.heading != null &&
-        now - motion.observedAt < 55_000,
-    )
-
     if (
-      (aircraftAnimationsRef.current.size > 0 || hasMovingAircraft) &&
+      aircraftAnimationsRef.current.size > 0 &&
       aircraftAnimationFrameRef.current === null
     ) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>

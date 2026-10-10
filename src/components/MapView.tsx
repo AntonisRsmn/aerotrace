@@ -132,6 +132,14 @@ export default function MapView({
   const historyRef = useRef<Map<string, Position[]>>(new Map())
   const imageLoadingRef = useRef<Set<string>>(new Set())
 
+  const aircraftPositionsRef = useRef<Map<string, Position>>(new Map())
+  const aircraftTargetsRef = useRef<Map<string, Position>>(new Map())
+  const aircraftAnimationsRef = useRef<
+    Map<string, { from: Position; to: Position; start: number; duration: number }>
+  >(new Map())
+  const aircraftAnimationFrameRef = useRef<number | null>(null)
+  const aircraftAnimationLastFrameRef = useRef(0)
+
   useEffect(() => {
     aircraftRef.current = aircraft
   }, [aircraft])
@@ -166,6 +174,86 @@ export default function MapView({
     }
   }, [showLabels])
 
+  function animateAircraftFrame(map: maplibregl.Map) {
+    if (mapRef.current !== map) {
+      aircraftAnimationFrameRef.current = null
+      return
+    }
+
+    const frameTime = performance.now()
+
+    // Updating a large GeoJSON source on every display frame is expensive.
+    // 20 updates/second keeps motion smooth while limiting worker/render work.
+    if (frameTime - aircraftAnimationLastFrameRef.current < 50) {
+      aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
+        animateAircraftFrame(map),
+      )
+      return
+    }
+
+    aircraftAnimationLastFrameRef.current = frameTime
+
+    const updates: Array<{
+      id: string
+      newGeometry: Point
+    }> = []
+
+    for (const [id, animation] of aircraftAnimationsRef.current) {
+      const progress = Math.min(
+        1,
+        Math.max(0, (frameTime - animation.start) / animation.duration),
+      )
+      const eased = progress * progress * (3 - 2 * progress)
+      const longitudeDelta =
+        animation.to[0] - animation.from[0] > 180
+          ? animation.to[0] - animation.from[0] - 360
+          : animation.to[0] - animation.from[0] < -180
+            ? animation.to[0] - animation.from[0] + 360
+            : animation.to[0] - animation.from[0]
+
+      let longitude = animation.from[0] + longitudeDelta * eased
+      if (longitude > 180) longitude -= 360
+      if (longitude < -180) longitude += 360
+
+      const position: Position = [
+        longitude,
+        animation.from[1] + (animation.to[1] - animation.from[1]) * eased,
+      ]
+
+      aircraftPositionsRef.current.set(id, position)
+      updates.push({
+        id,
+        newGeometry: {
+          type: 'Point',
+          coordinates: position,
+        },
+      })
+
+      if (progress >= 1) {
+        aircraftPositionsRef.current.set(id, animation.to)
+        aircraftAnimationsRef.current.delete(id)
+      }
+    }
+
+    const source = map.getSource(AIRCRAFT_SOURCE) as
+      | maplibregl.GeoJSONSource
+      | undefined
+
+    if (source && updates.length > 0) {
+      void source.updateData({ update: updates }).catch((error) => {
+        console.error('[AeroTrace] Could not animate aircraft positions:', error)
+      })
+    }
+
+    if (aircraftAnimationsRef.current.size > 0) {
+      aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
+        animateAircraftFrame(map),
+      )
+    } else {
+      aircraftAnimationFrameRef.current = null
+    }
+  }
+
   function updateAircraftSource(map: maplibregl.Map) {
     if (mapRef.current !== map) return
 
@@ -175,10 +263,14 @@ export default function MapView({
 
     if (!source) return
 
-    const features: FeatureCollection<
-      Point,
-      AircraftProperties
-    >['features'] = []
+    const add: FeatureCollection<Point, AircraftProperties>['features'] = []
+    const remove: string[] = []
+    const update: Array<{
+      id: string
+      addOrUpdateProperties: Array<{ key: string; value: unknown }>
+    }> = []
+    const nextIds = new Set<string>()
+    const now = performance.now()
 
     for (const item of aircraftRef.current) {
       if (
@@ -192,29 +284,97 @@ export default function MapView({
         continue
       }
 
-      features.push({
-        type: 'Feature',
-        properties: {
-          id: item.id,
-          callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
-          heading:
-            item.heading != null && Number.isFinite(item.heading)
-              ? item.heading
-              : 0,
-          selected: item.id === selectedIdRef.current,
-          hovered: item.id === hoveredIdRef.current,
-        },
-        geometry: {
-          type: 'Point',
-          coordinates: [item.longitude, item.latitude],
-        },
+      const id = item.id
+      const target: Position = [item.longitude, item.latitude]
+      const properties: AircraftProperties = {
+        id,
+        callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
+        heading:
+          item.heading != null && Number.isFinite(item.heading)
+            ? item.heading
+            : 0,
+        selected: id === selectedIdRef.current,
+        hovered: id === hoveredIdRef.current,
+      }
+
+      nextIds.add(id)
+      const existingPosition = aircraftPositionsRef.current.get(id)
+
+      if (!existingPosition) {
+        add.push({
+          type: 'Feature',
+          id,
+          properties,
+          geometry: {
+            type: 'Point',
+            coordinates: target,
+          },
+        })
+        aircraftPositionsRef.current.set(id, target)
+        aircraftTargetsRef.current.set(id, target)
+        continue
+      }
+
+      update.push({
+        id,
+        addOrUpdateProperties: [
+          { key: 'id', value: properties.id },
+          { key: 'callsign', value: properties.callsign },
+          { key: 'heading', value: properties.heading },
+          { key: 'selected', value: properties.selected },
+          { key: 'hovered', value: properties.hovered },
+        ],
+      })
+
+      const previousTarget = aircraftTargetsRef.current.get(id)
+      if (
+        !previousTarget ||
+        Math.abs(previousTarget[0] - target[0]) > 0.000001 ||
+        Math.abs(previousTarget[1] - target[1]) > 0.000001
+      ) {
+        const from = aircraftPositionsRef.current.get(id) ?? target
+        aircraftTargetsRef.current.set(id, target)
+
+        if (
+          Math.abs(from[0] - target[0]) < 0.000001 &&
+          Math.abs(from[1] - target[1]) < 0.000001
+        ) {
+          aircraftAnimationsRef.current.delete(id)
+          aircraftPositionsRef.current.set(id, target)
+        } else {
+          aircraftAnimationsRef.current.set(id, {
+            from,
+            to: target,
+            start: now,
+            duration: 1200,
+          })
+        }
+      }
+    }
+
+    for (const id of aircraftPositionsRef.current.keys()) {
+      if (!nextIds.has(id)) {
+        remove.push(id)
+        aircraftPositionsRef.current.delete(id)
+        aircraftTargetsRef.current.delete(id)
+        aircraftAnimationsRef.current.delete(id)
+      }
+    }
+
+    if (add.length || remove.length || update.length) {
+      void source.updateData({ add, remove, update }).catch((error) => {
+        console.error('[AeroTrace] Could not update aircraft source:', error)
       })
     }
 
-    source.setData({
-      type: 'FeatureCollection',
-      features,
-    })
+    if (
+      aircraftAnimationsRef.current.size > 0 &&
+      aircraftAnimationFrameRef.current === null
+    ) {
+      aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
+        animateAircraftFrame(map),
+      )
+    }
   }
 
   function updateHistoryPath(map: maplibregl.Map) {
@@ -243,18 +403,6 @@ export default function MapView({
       return
     }
 
-    const current: Position = [
-      selectedAircraft.longitude,
-      selectedAircraft.latitude,
-    ]
-
-    const last = positions[positions.length - 1]
-
-    const coordinates =
-      last[0] === current[0] && last[1] === current[1]
-        ? positions
-        : [...positions, current]
-
     source.setData({
       type: 'FeatureCollection',
       features: [
@@ -263,7 +411,7 @@ export default function MapView({
           properties: { aircraftId: selectedAircraft.id },
           geometry: {
             type: 'LineString',
-            coordinates,
+            coordinates: positions,
           },
         },
       ],
@@ -571,6 +719,7 @@ export default function MapView({
       map.addSource(AIRCRAFT_SOURCE, {
         type: 'geojson',
         data: emptyAircraft,
+        dynamic: true,
       })
     }
 
@@ -796,6 +945,14 @@ export default function MapView({
         mapRef.current = null
       }
 
+      if (aircraftAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(aircraftAnimationFrameRef.current)
+        aircraftAnimationFrameRef.current = null
+      }
+
+      aircraftAnimationsRef.current.clear()
+      aircraftPositionsRef.current.clear()
+      aircraftTargetsRef.current.clear()
       imageLoadingRef.current.clear()
       map.remove()
     }
@@ -850,9 +1007,11 @@ export default function MapView({
 
         if (cancelled) return
 
-        const positions: Position[] = (data.points ?? [])
+        const seenPositions = new Set<string>()
+        const orderedPoints = (data.points ?? [])
           .filter(
             (point) =>
+              Number.isFinite(point.time) &&
               Number.isFinite(point.longitude) &&
               Number.isFinite(point.latitude) &&
               point.latitude >= -90 &&
@@ -860,10 +1019,15 @@ export default function MapView({
               point.longitude >= -180 &&
               point.longitude <= 180,
           )
-          .map((point) => [
-            point.longitude,
-            point.latitude,
-          ])
+          .sort((a, b) => a.time - b.time)
+
+        const positions: Position[] = []
+        for (const point of orderedPoints) {
+          const key = `${point.longitude.toFixed(6)},${point.latitude.toFixed(6)}`
+          if (seenPositions.has(key)) continue
+          seenPositions.add(key)
+          positions.push([point.longitude, point.latitude])
+        }
 
         historyRef.current.set(selectedId, positions)
 

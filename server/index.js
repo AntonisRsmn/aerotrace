@@ -555,6 +555,55 @@ function normalizeState(state, nowSeconds) {
   }
 }
 
+async function fetchAircraftAnonymously(bounds) {
+  const query = new URLSearchParams({
+    lamin: String(bounds.lamin),
+    lamax: String(bounds.lamax),
+    lomin: String(bounds.lomin),
+    lomax: String(bounds.lomax),
+    extended: '1',
+  })
+
+  console.info('[AeroTrace OpenSky] Trying anonymous aircraft access as a fallback.')
+
+  const response = await fetch(
+    `${OPENSKY_API}/states/all?${query}`,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    },
+  )
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw createRateLimitError(60)
+    }
+
+    throw createUnavailableError(
+      `OpenSky anonymous aircraft request failed (${response.status}).`,
+      502,
+    )
+  }
+
+  const payload = await response.json()
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const states = Array.isArray(payload.states) ? payload.states : []
+
+  console.info(
+    `[AeroTrace OpenSky] Anonymous aircraft access succeeded with ${states.length} state records.`,
+  )
+
+  return {
+    source: 'OpenSky Network (anonymous)',
+    time: typeof payload.time === 'number' ? payload.time : nowSeconds,
+    aircraft: states
+      .map((state) => normalizeState(state, nowSeconds))
+      .filter(Boolean),
+  }
+}
+
 async function fetchAircraftFromAccount(bounds, account) {
   const token = await getAccessToken(account)
 
@@ -611,10 +660,10 @@ async function fetchAircraft(bounds) {
   const accounts = getOpenSkyAccounts()
 
   if (accounts.length === 0) {
-    throw createUnavailableError(
-      'OpenSky credentials are not configured. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET, or configure the corresponding _BACKUP variables.',
-      503,
+    console.warn(
+      '[AeroTrace OpenSky] No credentials configured; trying anonymous aircraft access.',
     )
+    return fetchAircraftAnonymously(bounds)
   }
 
   const now = Date.now()
@@ -696,6 +745,44 @@ async function fetchAircraft(bounds) {
   }
 
   const lastError = errors[errors.length - 1]?.error
+
+  // If OAuth could not establish a connection, try the public state endpoint
+  // without a token. This does not bypass HTTP auth errors or API rate limits.
+  const hasConnectionTimeout = errors.some(
+    (entry) =>
+      entry.error?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+      entry.error?.cause?.code === 'ETIMEDOUT',
+  )
+
+  if (hasConnectionTimeout) {
+    try {
+      return await fetchAircraftAnonymously(bounds)
+    } catch (fallbackError) {
+      console.warn(
+        '[AeroTrace OpenSky] Anonymous fallback failed:',
+        {
+          name:
+            fallbackError instanceof Error
+              ? fallbackError.name
+              : typeof fallbackError,
+          message:
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : String(fallbackError),
+          cause:
+            fallbackError instanceof Error &&
+            fallbackError.cause instanceof Error
+              ? {
+                  name: fallbackError.cause.name,
+                  message: fallbackError.cause.message,
+                  code: fallbackError.cause.code,
+                }
+              : null,
+        },
+      )
+      errors.push({ account: 'anonymous fallback', error: fallbackError })
+    }
+  }
 
   const allAccountsCoolingDown =
     accounts.every(

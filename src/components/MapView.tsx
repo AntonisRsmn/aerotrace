@@ -483,6 +483,7 @@ export default function MapView({
         id: AIRCRAFT_LABEL_LAYER,
         type: 'symbol',
         source: AIRCRAFT_SOURCE,
+        filter: ['==', ['get', 'hovered'], true],
         layout: {
           'text-field': ['get', 'callsign'],
           'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],

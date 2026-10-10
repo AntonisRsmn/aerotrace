@@ -62,6 +62,8 @@ const AIRPORT_LABELS_LAYER = 'aerotrace-airport-labels'
 const HISTORY_SOURCE = 'aerotrace-history-path'
 const HISTORY_CASING_LAYER = 'aerotrace-history-casing'
 const HISTORY_LAYER = 'aerotrace-history-line'
+const LIVE_TRAIL_SOURCE = 'aerotrace-live-trail'
+const LIVE_TRAIL_LAYER = 'aerotrace-live-trail-line'
 
 const PLANE_IMAGE = 'aerotrace-plane-blue-v4'
 const PLANE_IMAGE_HOVER = 'aerotrace-plane-yellow-v4'
@@ -316,6 +318,10 @@ export default function MapView({
       source.updateData({ update: updates })
     }
 
+    if (showTrailsRef.current) {
+      updateLiveTrail(map)
+    }
+
     // Continue while any transition is active or an aircraft can still be
     // projected forward from its last observed position.
     const hasMovingAircraft = Array.from(aircraftMotionRef.current.values()).some(
@@ -531,6 +537,57 @@ export default function MapView({
           },
         },
       ],
+    })
+  }
+
+
+  function updateLiveTrail(map: maplibregl.Map) {
+    const source = map.getSource(LIVE_TRAIL_SOURCE) as
+      | maplibregl.GeoJSONSource
+      | undefined
+    if (!source) return
+
+    const selectedAircraft = aircraftRef.current.find(
+      (item) => item.id === selectedIdRef.current,
+    )
+    const positions = selectedAircraft
+      ? historyRef.current.get(selectedAircraft.id) ?? []
+      : []
+
+    if (!showTrailsRef.current || !selectedAircraft || positions.length === 0) {
+      source.setData(emptyLines)
+      return
+    }
+
+    const lastObserved = positions[positions.length - 1]
+    const current =
+      aircraftPositionsRef.current.get(selectedAircraft.id) ??
+      ([selectedAircraft.longitude, selectedAircraft.latitude] as Position)
+
+    const distance = distanceMeters(
+      { longitude: lastObserved[0], latitude: lastObserved[1] },
+      { longitude: current[0], latitude: current[1] },
+    )
+    if (distance > 150_000) {
+      source.setData(emptyLines)
+      return
+    }
+
+    if (
+      Math.abs(lastObserved[0] - current[0]) < 0.000001 &&
+      Math.abs(lastObserved[1] - current[1]) < 0.000001
+    ) {
+      source.setData(emptyLines)
+      return
+    }
+
+    source.setData({
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: { estimated: true },
+        geometry: { type: 'LineString', coordinates: [lastObserved, current] },
+      }],
     })
   }
 
@@ -831,6 +888,31 @@ export default function MapView({
       })
     }
 
+    if (!map.getSource(LIVE_TRAIL_SOURCE)) {
+      map.addSource(LIVE_TRAIL_SOURCE, {
+        type: 'geojson',
+        data: emptyLines,
+      })
+    }
+
+    if (!map.getLayer(LIVE_TRAIL_LAYER)) {
+      map.addLayer({
+        id: LIVE_TRAIL_LAYER,
+        type: 'line',
+        source: LIVE_TRAIL_SOURCE,
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+        paint: {
+          'line-color': '#55B7FF',
+          'line-width': 3,
+          'line-opacity': 0.9,
+          'line-dasharray': [2, 2],
+        },
+      })
+    }
+
     if (!map.getSource(AIRCRAFT_SOURCE)) {
       map.addSource(AIRCRAFT_SOURCE, {
         type: 'geojson',
@@ -981,6 +1063,7 @@ export default function MapView({
 
     updateAircraftSource(map)
     updateHistoryPath(map)
+    updateLiveTrail(map)
   }
 
   useEffect(() => {
@@ -1151,6 +1234,7 @@ export default function MapView({
 
         if (map) {
           updateHistoryPath(map)
+          updateLiveTrail(map)
         }
       } catch (error) {
         if (

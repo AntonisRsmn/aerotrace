@@ -98,8 +98,10 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [source, setSource] = useState('OpenSky Network')
-  const [dataMode, setDataMode] = useState<'demo' | 'live'>('live')
+  const [dataMode, setDataMode] = useState<'demo' | 'live' | 'hybrid'>('live')
   const [totalSimulated, setTotalSimulated] = useState<number | null>(null)
+  const [liveAircraftCount, setLiveAircraftCount] = useState<number | null>(null)
+  const [liveAvailable, setLiveAvailable] = useState<boolean | null>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const [mobilePanel, setMobilePanel] = useState<'list' | 'details' | null>(
     null,
@@ -173,6 +175,8 @@ export default function App() {
         setSource(result.source)
         setDataMode(result.mode)
         setTotalSimulated(result.totalSimulated ?? null)
+        setLiveAircraftCount(result.liveAircraftCount ?? null)
+        setLiveAvailable(result.liveAvailable ?? null)
         setUpdatedAt(result.time)
         setError(null)
       } catch (caught) {
@@ -368,15 +372,15 @@ export default function App() {
 
         <div className="topbar-status">
           <span className={`status-dot ${error ? 'status-error' : ''}`} />
-          <span>{error ? 'Connection issue' : dataMode === 'demo' ? 'Simulated aircraft feed' : 'Aircraft feed'}</span>
+          <span>{error ? 'Connection issue' : dataMode === 'demo' ? 'Simulated aircraft feed' : dataMode === 'hybrid' ? 'Live + simulated aircraft feed' : 'Aircraft feed'}</span>
           <span className="status-divider" />
-          <span className="source-label">{dataMode === 'demo' ? `DEMO · ${(totalSimulated ?? aircraft.length).toLocaleString()} GENERATED` : source}</span>
+          <span className="source-label">{dataMode === 'demo' ? `DEMO · ${(totalSimulated ?? aircraft.length).toLocaleString()} GENERATED` : dataMode === 'hybrid' ? `${liveAvailable === false ? 'LIVE FEED UNAVAILABLE · ' : ''}${(liveAircraftCount ?? 0).toLocaleString()} LIVE · ${(totalSimulated ?? 0).toLocaleString()} SIMULATED` : source}</span>
         </div>
 
         <div className="topbar-actions">
           <span className="live-pill">
             <span className={`status-dot ${error ? 'status-error' : ''}`} />
-            {loading ? 'CONNECTING' : error ? 'DEGRADED' : dataMode === 'demo' ? 'DEMO DATA' : 'LIVE'}
+            {loading ? 'CONNECTING' : error ? 'DEGRADED' : dataMode === 'demo' ? 'DEMO DATA' : dataMode === 'hybrid' ? 'HYBRID DATA' : 'LIVE'}
           </span>
         </div>
       </header>

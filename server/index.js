@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { generateDemoAircraft } from './demo-aircraft.js'
+import { generateDemoAircraft } from './recorded-demo.js'
 
 const PORT = Number(process.env.PORT || process.env.API_PORT || 3000)
 

@@ -13,6 +13,8 @@ type OpenSkyAircraft = {
   icao24: string
   callsign: string
   originCountry: string | null
+  airline?: string | null
+  category?: string | null
   longitude: number
   latitude: number
   altitudeFt: number | null
@@ -150,7 +152,7 @@ export async function fetchAircraft(
       registration: item.registration ?? null,
       aircraftType: item.aircraftType ?? null,
       category: categoryFor(item),
-      airline: null,
+      airline: item.airline ?? null,
       origin: null,
       destination: null,
       altitudeFt: item.altitudeFt,

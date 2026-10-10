@@ -770,6 +770,11 @@ async function lookupAircraftType(icao24) {
         isHelicopter: false,
       }
       aircraftTypeCache.set(icao24, { data: empty, cachedAt: Date.now() })
+      while (aircraftTypeCache.size > MAX_DETAILS_CACHE_SIZE) {
+        const oldestKey = aircraftTypeCache.keys().next().value
+        if (oldestKey === undefined) break
+        aircraftTypeCache.delete(oldestKey)
+      }
       return empty
     }
 
@@ -822,11 +827,16 @@ function applyAircraftTypeMetadata(data) {
 
   for (const item of data.aircraft || []) {
     const cached = aircraftTypeCache.get(item.icao24)
-    if (cached && now - cached.cachedAt < AIRCRAFT_TYPE_CACHE_TTL_MS) {
-      Object.assign(item, cached.data, {
-        isHelicopter: Boolean(item.isHelicopter || cached.data.isHelicopter),
-      })
+    if (!cached) continue
+
+    if (now - cached.cachedAt >= AIRCRAFT_TYPE_CACHE_TTL_MS) {
+      aircraftTypeCache.delete(item.icao24)
+      continue
     }
+
+    Object.assign(item, cached.data, {
+      isHelicopter: Boolean(item.isHelicopter || cached.data.isHelicopter),
+    })
   }
 
   // Enrich a small number per minute in the background. Live position updates

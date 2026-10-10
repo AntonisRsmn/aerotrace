@@ -911,22 +911,15 @@ async function fetchAircraft(bounds) {
     }
   }
 
-  const lastError = errors[errors.length - 1]?.error
-
-  // If OAuth could not establish a connection, try the public state endpoint
-  // without a token. This does not bypass HTTP auth errors or API rate limits.
-  const hasConnectionTimeout = errors.some(
-    (entry) =>
-      entry.error?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-      entry.error?.cause?.code === 'ETIMEDOUT',
-  )
-
-  if (hasConnectionTimeout) {
+  // If authenticated OpenSky requests failed, try its anonymous endpoint and
+  // then the independent ADSB.lol provider. This also covers rejected or
+  // unavailable credentials, not only connection timeouts.
+  if (errors.length > 0) {
     try {
       return await fetchAircraftAnonymously(bounds)
     } catch (fallbackError) {
       console.warn(
-        '[AeroTrace OpenSky] Anonymous fallback failed:',
+        '[AeroTrace OpenSky] Anonymous fallback failed; trying ADSB.lol.',
         {
           name:
             fallbackError instanceof Error
@@ -948,14 +941,38 @@ async function fetchAircraft(bounds) {
         },
       )
       errors.push({ account: 'anonymous fallback', error: fallbackError })
+    }
 
-      try {
-        return await fetchAircraftFromAdsbLol(bounds)
-      } catch (alternativeError) {
-        errors.push({ account: 'ADSB.lol fallback', error: alternativeError })
-      }
+    try {
+      return await fetchAircraftFromAdsbLol(bounds)
+    } catch (alternativeError) {
+      console.warn(
+        '[AeroTrace ADSB.lol] Alternative provider failed:',
+        {
+          name:
+            alternativeError instanceof Error
+              ? alternativeError.name
+              : typeof alternativeError,
+          message:
+            alternativeError instanceof Error
+              ? alternativeError.message
+              : String(alternativeError),
+          cause:
+            alternativeError instanceof Error &&
+            alternativeError.cause instanceof Error
+              ? {
+                  name: alternativeError.cause.name,
+                  message: alternativeError.cause.message,
+                  code: alternativeError.cause.code,
+                }
+              : null,
+        },
+      )
+      errors.push({ account: 'ADSB.lol fallback', error: alternativeError })
     }
   }
+
+  const lastError = errors[errors.length - 1]?.error
 
   const allAccountsCoolingDown =
     accounts.every(

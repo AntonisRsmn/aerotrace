@@ -74,6 +74,10 @@ const emptyAircraft: FeatureCollection<Point, AircraftProperties> = {
   features: [],
 }
 
+let airportsDataPromise: Promise<
+  FeatureCollection<Point, AirportProperties>
+> | null = null
+
 const emptyAirports: FeatureCollection<Point, AirportProperties> = {
   type: 'FeatureCollection',
   features: [],
@@ -361,76 +365,89 @@ export default function MapView({
 
   async function loadAirports(map: maplibregl.Map) {
     try {
-      const response = await fetch(
-        'https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv',
-      )
+      // Parse the large public CSV only once per page session. Additional map
+      // mounts reuse the cached GeoJSON instead of downloading and parsing it again.
+      if (!airportsDataPromise) {
+        airportsDataPromise = (async () => {
+          const response = await fetch(
+            'https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv',
+          )
 
-      if (!response.ok) {
-        throw new Error(`Airport dataset request failed (${response.status}).`)
-      }
+          if (!response.ok) {
+            throw new Error(`Airport dataset request failed (${response.status}).`)
+          }
 
-      const csv = await response.text()
-      const lines = csv.split(/\r?\n/)
-      if (lines.length < 2) return
+          const csv = await response.text()
+          const lines = csv.split(/\r?\n/)
+          if (lines.length < 2) {
+            return emptyAirports
+          }
 
-      const headers = parseCsvLine(lines[0])
-      const column = (name: string) => headers.indexOf(name)
-      const typeIndex = column('type')
-      const nameIndex = column('name')
-      const latIndex = column('latitude_deg')
-      const lonIndex = column('longitude_deg')
-      const iataIndex = column('iata_code')
-      const icaoIndex = column('gps_code')
+          const headers = parseCsvLine(lines[0])
+          const column = (name: string) => headers.indexOf(name)
+          const typeIndex = column('type')
+          const nameIndex = column('name')
+          const latIndex = column('latitude_deg')
+          const lonIndex = column('longitude_deg')
+          const iataIndex = column('iata_code')
+          const icaoIndex = column('gps_code')
 
-      const features: FeatureCollection<Point, AirportProperties>['features'] = []
+          const features: FeatureCollection<Point, AirportProperties>['features'] = []
 
-      for (const line of lines.slice(1)) {
-        if (!line) continue
-        const values = parseCsvLine(line)
-        const airportType = values[typeIndex]
+          for (const line of lines.slice(1)) {
+            if (!line) continue
+            const values = parseCsvLine(line)
+            const airportType = values[typeIndex]
 
-        if (airportType !== 'large_airport' && airportType !== 'medium_airport') {
-          continue
-        }
+            if (airportType !== 'large_airport' && airportType !== 'medium_airport') {
+              continue
+            }
 
-        const latitude = Number(values[latIndex])
-        const longitude = Number(values[lonIndex])
-        if (
-          !Number.isFinite(latitude) ||
-          !Number.isFinite(longitude) ||
-          latitude < -90 ||
-          latitude > 90 ||
-          longitude < -180 ||
-          longitude > 180
-        ) {
-          continue
-        }
+            const latitude = Number(values[latIndex])
+            const longitude = Number(values[lonIndex])
+            if (
+              !Number.isFinite(latitude) ||
+              !Number.isFinite(longitude) ||
+              latitude < -90 ||
+              latitude > 90 ||
+              longitude < -180 ||
+              longitude > 180
+            ) {
+              continue
+            }
 
-        const iata = values[iataIndex] || ''
-        const icao = values[icaoIndex] || ''
-        features.push({
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [longitude, latitude],
-          },
-          properties: {
-            name: values[nameIndex] || 'Airport',
-            iata,
-            icao,
-          },
+            features.push({
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [longitude, latitude],
+              },
+              properties: {
+                name: values[nameIndex] || 'Airport',
+                iata: values[iataIndex] || '',
+                icao: values[icaoIndex] || '',
+              },
+            })
+          }
+
+          return {
+            type: 'FeatureCollection' as const,
+            features,
+          }
+        })().catch((error) => {
+          // Permit retrying if the dataset request fails temporarily.
+          airportsDataPromise = null
+          throw error
         })
       }
 
+      const data = await airportsDataPromise
       if (mapRef.current !== map) return
 
       const source = map.getSource(AIRPORT_SOURCE) as
         | maplibregl.GeoJSONSource
         | undefined
-      source?.setData({
-        type: 'FeatureCollection',
-        features,
-      })
+      source?.setData(data)
     } catch (error) {
       console.error('[AeroTrace] Could not load airport data:', error)
     }
@@ -479,7 +496,7 @@ export default function MapView({
         id: AIRPORT_LABELS_LAYER,
         type: 'symbol',
         source: AIRPORT_SOURCE,
-        minzoom: 4.5,
+        minzoom: 5.5,
         layout: {
           'text-field': [
             'case',
@@ -492,8 +509,8 @@ export default function MapView({
             'interpolate',
             ['linear'],
             ['zoom'],
-            4.5, 8,
-            8, 11,
+            5.5, 8,
+            9, 11,
           ],
           'text-anchor': 'top',
           'text-offset': [0, 0.5],
@@ -714,6 +731,11 @@ export default function MapView({
       zoom: 3.2,
       minZoom: 2,
       maxZoom: 16,
+      // Reduce map rendering and tile-cache overhead on lower-powered devices.
+      fadeDuration: 0,
+      maxTileCacheSize: 96,
+      maxTileCacheZoomLevels: 3,
+      refreshExpiredTiles: false,
       attributionControl: {
         customAttribution: 'Airport data © OurAirports',
       },

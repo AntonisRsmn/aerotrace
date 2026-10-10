@@ -5,6 +5,14 @@ export type AircraftCategory =
   | 'Business'
   | 'Military'
   | 'General aviation'
+  | 'Helicopter'
+  | 'Glider'
+  | 'Lighter-than-air'
+  | 'UAV'
+  | 'High performance'
+  | 'Heavy'
+  | 'Large'
+  | 'Small / light'
   | 'Unknown'
 
 export type Aircraft = {

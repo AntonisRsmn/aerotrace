@@ -224,9 +224,49 @@ export default function MapView({
   function getBufferedPosition(id: string, renderTime: number): Position | null {
     const buffer = positionBufferRef.current.get(id)
     if (!buffer?.length) return null
-    if (buffer.length === 1 || renderTime <= buffer[0].time) {
-      return buffer[0].position
+
+    const extrapolateFromLatestObservation = (): Position => {
+      const latest = buffer[buffer.length - 1].position
+      const motion = aircraftMotionRef.current.get(id)
+      if (
+        !motion ||
+        motion.onGround === true ||
+        motion.speedKt == null ||
+        motion.heading == null ||
+        motion.speedKt < 20
+      ) {
+        return latest
+      }
+
+      // OpenSky state vectors may be cached for around a minute. Move the
+      // selected marker between reports using its last reported velocity, but
+      // cap prediction so it never drifts indefinitely or changes the recorded trail.
+      const elapsedSeconds = Math.min(
+        55,
+        Math.max(0, (performance.now() - motion.observedAt - POSITION_BUFFER_DELAY_MS) / 1000),
+      )
+      const distanceMeters = motion.speedKt * 0.514444 * elapsedSeconds
+      const headingRadians = (motion.heading * Math.PI) / 180
+      const northMeters = distanceMeters * Math.cos(headingRadians)
+      const eastMeters = distanceMeters * Math.sin(headingRadians)
+      const latitude = motion.observedPosition[1] + northMeters / 111_320
+      const longitudeScale = Math.max(
+        0.15,
+        Math.cos((motion.observedPosition[1] * Math.PI) / 180),
+      )
+      let longitude =
+        motion.observedPosition[0] +
+        eastMeters / (111_320 * longitudeScale)
+      if (longitude > 180) longitude -= 360
+      if (longitude < -180) longitude += 360
+
+      return [
+        longitude,
+        Math.max(-90, Math.min(90, latitude)),
+      ]
     }
+
+    if (renderTime <= buffer[0].time) return buffer[0].position
 
     for (let index = 1; index < buffer.length; index += 1) {
       const next = buffer[index]
@@ -237,8 +277,6 @@ export default function MapView({
       if (span <= 0) return next.position
 
       const progress = Math.max(0, Math.min(1, (renderTime - previous.time) / span))
-      // Interpolate the shortest longitude path so tracks crossing the
-      // international date line don't travel the long way around the globe.
       let longitudeDelta = next.position[0] - previous.position[0]
       if (longitudeDelta > 180) longitudeDelta -= 360
       if (longitudeDelta < -180) longitudeDelta += 360
@@ -253,9 +291,7 @@ export default function MapView({
       ]
     }
 
-    // Never extrapolate beyond the newest observation: hold the last known
-    // position until another real feed observation arrives.
-    return buffer[buffer.length - 1].position
+    return extrapolateFromLatestObservation()
   }
 
   function addPositionObservation(id: string, position: Position, time: number) {
@@ -295,8 +331,8 @@ export default function MapView({
     const frameTime = performance.now()
     const renderTime = Date.now() - POSITION_BUFFER_DELAY_MS
 
-    // Update the map at up to ~30 FPS while buffered observations are available.
-    if (frameTime - aircraftAnimationLastFrameRef.current < 33) {
+    // A steady 20 FPS is smooth enough for a single selected marker and lighter on MapLibre.
+    if (frameTime - aircraftAnimationLastFrameRef.current < 50) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -344,8 +380,21 @@ export default function MapView({
       updateLiveTrail(map)
     }
 
-    // Continue only while the delayed render clock has observations to interpolate.
-    if (hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS)) {
+    // Keep the selected aircraft moving between feed updates when velocity is known.
+    const selectedMotion = selectedIdRef.current
+      ? aircraftMotionRef.current.get(selectedIdRef.current)
+      : null
+    const predictionActive = Boolean(
+      selectedMotion &&
+      selectedMotion.onGround !== true &&
+      selectedMotion.speedKt != null &&
+      selectedMotion.heading != null &&
+      performance.now() - selectedMotion.observedAt < 55_000
+    )
+    if (
+      hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) ||
+      predictionActive
+    ) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -499,8 +548,19 @@ export default function MapView({
       source.updateData({ add, remove, update })
     }
 
+    const selectedMotion = selectedIdRef.current
+      ? aircraftMotionRef.current.get(selectedIdRef.current)
+      : null
+    const predictionActive = Boolean(
+      selectedMotion &&
+      selectedMotion.onGround !== true &&
+      selectedMotion.speedKt != null &&
+      selectedMotion.heading != null &&
+      performance.now() - selectedMotion.observedAt < 55_000
+    )
     if (
-      hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) &&
+      (hasBufferedInterpolation(Date.now() - POSITION_BUFFER_DELAY_MS) ||
+        predictionActive) &&
       aircraftAnimationFrameRef.current === null
     ) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
@@ -1375,19 +1435,68 @@ export default function MapView({
           )
           .sort((a, b) => a.time - b.time)
 
-        const positions: Position[] = []
+        // A transponder address is reused for the aircraft's whole life, so
+        // its saved points can contain multiple flights. Split at ground points,
+        // long time gaps, and physically implausible jumps; draw only the latest
+        // segment that still matches the live aircraft position.
+        const segments: typeof orderedPoints[] = []
+        let segment: typeof orderedPoints = []
         for (const point of orderedPoints) {
+          const previous = segment[segment.length - 1]
+          let breakSegment = false
+
+          if (previous) {
+            const elapsed = point.time - previous.time
+            const distance = distanceMeters(
+              { longitude: previous.longitude, latitude: previous.latitude },
+              { longitude: point.longitude, latitude: point.latitude },
+            )
+            const impliedSpeedKmh = elapsed > 0 ? (distance / elapsed) * 3.6 : Infinity
+            breakSegment =
+              elapsed <= 0 ||
+              elapsed > 30 * 60 ||
+              (elapsed < 10 * 60 && distance > 100_000) ||
+              impliedSpeedKmh > 1_200
+          }
+
+          if (breakSegment && segment.length) {
+            segments.push(segment)
+            segment = []
+          }
+
+          segment.push(point)
+
+          // A ground observation ends the prior flight. Keep it as the first
+          // point of a possible new segment, rather than joining through it.
+          if (point.onGround === true && segment.length > 1) {
+            segments.push(segment.slice(0, -1))
+            segment = [point]
+          }
+        }
+        if (segment.length) segments.push(segment)
+
+        const liveAircraft = aircraftRef.current.find((item) => item.id === selectedId)
+        let latestSegment = segments[segments.length - 1] ?? []
+        if (liveAircraft && latestSegment.length) {
+          const lastPoint = latestSegment[latestSegment.length - 1]
+          const distanceToLive = distanceMeters(
+            { longitude: lastPoint.longitude, latitude: lastPoint.latitude },
+            { longitude: liveAircraft.longitude, latitude: liveAircraft.latitude },
+          )
+          if (distanceToLive > 150_000) {
+            latestSegment = []
+          }
+        }
+
+        const positions: Position[] = []
+        for (const point of latestSegment) {
           const position: Position = [point.longitude, point.latitude]
           const previous = positions[positions.length - 1]
-
           if (
             previous &&
             Math.abs(previous[0] - position[0]) < 0.000001 &&
             Math.abs(previous[1] - position[1]) < 0.000001
-          ) {
-            continue
-          }
-
+          ) continue
           positions.push(position)
         }
 
@@ -1419,7 +1528,7 @@ export default function MapView({
 
     const interval = window.setInterval(() => {
       void loadSavedTrack()
-    }, 3000)
+    }, 30_000)
 
     return () => {
       cancelled = true

@@ -811,6 +811,54 @@ async function fetchAircraftFromAirplanesLive(bounds) {
   }
 }
 
+
+async function fetchAircraftFromAdsbFi(bounds) {
+  const centerLat = (bounds.lamin + bounds.lamax) / 2
+  const centerLon = (bounds.lomin + bounds.lomax) / 2
+  const endpoint =
+    `https://opendata.adsb.fi/api/v3/lat/${centerLat.toFixed(4)}/lon/${centerLon.toFixed(4)}/dist/250`
+
+  console.info('[AeroTrace ADSB.fi] Trying public open-data aircraft provider.')
+
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'AeroTrace/0.1 (aircraft tracking map)',
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+
+  if (!response.ok) {
+    throw createUnavailableError(
+      `ADSB.fi aircraft request failed (${response.status}).`,
+      response.status === 429 ? 429 : 502,
+    )
+  }
+
+  const payload = await response.json()
+  if (!Array.isArray(payload.ac)) {
+    throw createUnavailableError('ADSB.fi returned an unexpected response.')
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const aircraft = payload.ac
+    .map((item) => normalizeAdsbLolAircraft(item, nowSeconds))
+    .filter(Boolean)
+
+  console.info(
+    `[AeroTrace ADSB.fi] Fallback succeeded with ${aircraft.length} aircraft.`,
+  )
+
+  return {
+    source: 'ADSB.fi',
+    time:
+      typeof payload.now === 'number'
+        ? Math.floor(payload.now / 1000)
+        : nowSeconds,
+    aircraft,
+  }
+}
+
 async function fetchAircraftFromAccount(bounds, account) {
   const token = await getAccessToken(account)
 
@@ -886,7 +934,15 @@ async function fetchAircraft(bounds) {
         '[AeroTrace ADSB.lol] Fallback failed; trying Airplanes.live.',
         adsbLolError instanceof Error ? adsbLolError.message : adsbLolError,
       )
-      return fetchAircraftFromAirplanesLive(bounds)
+      try {
+        return await fetchAircraftFromAirplanesLive(bounds)
+      } catch (airplanesLiveError) {
+        console.warn(
+          '[AeroTrace Airplanes.live] Fallback failed; trying ADSB.fi.',
+          airplanesLiveError instanceof Error ? airplanesLiveError.message : airplanesLiveError,
+        )
+        return fetchAircraftFromAdsbFi(bounds)
+      }
     }
   }
 
@@ -1056,6 +1112,27 @@ async function fetchAircraft(bounds) {
           account: 'Airplanes.live fallback',
           error: airplanesLiveError,
         })
+
+        try {
+          return await fetchAircraftFromAdsbFi(bounds)
+        } catch (adsbFiError) {
+          console.warn(
+            '[AeroTrace ADSB.fi] Alternative provider failed:',
+            {
+              name: adsbFiError instanceof Error ? adsbFiError.name : typeof adsbFiError,
+              message: adsbFiError instanceof Error ? adsbFiError.message : String(adsbFiError),
+              cause:
+                adsbFiError instanceof Error && adsbFiError.cause instanceof Error
+                  ? {
+                      name: adsbFiError.cause.name,
+                      message: adsbFiError.cause.message,
+                      code: adsbFiError.cause.code,
+                    }
+                  : null,
+            },
+          )
+          errors.push({ account: 'ADSB.fi fallback', error: adsbFiError })
+        }
       }
     }
   }

@@ -517,7 +517,7 @@ function normalizeState(state, nowSeconds) {
         ? Math.round(verticalRate * 196.8504)
         : null,
     squawk: typeof squawk === 'string' ? squawk : null,
-    isHelicopter: category === 8,
+    isHelicopter: Number(category) === 8,
     lastSeenSeconds:
       typeof contactTime === 'number'
         ? Math.max(0, Math.round(nowSeconds - contactTime))
@@ -533,6 +533,7 @@ async function fetchAircraftFromAccount(bounds, account) {
     lamax: String(bounds.lamax),
     lomin: String(bounds.lomin),
     lomax: String(bounds.lomax),
+    extended: '1',
   })
 
   const response = await fetch(
@@ -728,7 +729,8 @@ function getCachedPhoto(key) {
 
   if (!entry) return undefined
 
-  if (Date.now() - entry.cachedAt >= PHOTO_CACHE_TTL_MS) {
+  const ttl = entry.photo ? PHOTO_CACHE_TTL_MS : 5 * 60 * 1000
+  if (Date.now() - entry.cachedAt >= ttl) {
     aircraftPhotoCache.delete(key)
     return undefined
   }
@@ -770,7 +772,7 @@ async function lookupAircraftPhoto(icao24, registration) {
         headers: {
           Accept: 'application/json',
           'User-Agent':
-            'AeroTrace/0.1 (+https://github.com/AntonisRsmn/aerotrace)',
+            'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace; contact: https://rusman.gr)',
         },
         signal: AbortSignal.timeout(8000),
       })
@@ -785,9 +787,17 @@ async function lookupAircraftPhoto(icao24, registration) {
       for (const item of photos) {
         const src =
           item?.thumbnail_large?.src ||
-          item?.thumbnail?.src
+          item?.thumbnail?.src ||
+          item?.thumbnail_small?.src ||
+          (typeof item?.thumbnail_large === 'string'
+            ? item.thumbnail_large
+            : null) ||
+          (typeof item?.thumbnail === 'string'
+            ? item.thumbnail
+            : null) ||
+          item?.src
 
-        const link = item?.link
+        const link = item?.link || item?.url
 
         if (
           typeof src !== 'string' ||

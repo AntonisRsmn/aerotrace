@@ -27,6 +27,9 @@ type OpenSkyAircraft = {
   registration?: string | null
   aircraftType?: string | null
   aircraftTypeCode?: string | null
+  categoryCode?: number | null
+  category?: string | null
+  isHelicopter?: boolean
 }
 
 type AircraftResponse = {
@@ -54,9 +57,38 @@ export type AircraftDetails = {
   cached?: boolean
 }
 
-function categoryFor(
-  _onGround: boolean | null,
-): AircraftCategory {
+function categoryFor(item: {
+  categoryCode?: number | null
+  category?: string | null
+  isHelicopter?: boolean
+  aircraftType?: string | null
+}): AircraftCategory {
+  if (item.isHelicopter || Number(item.categoryCode) === 7 || detectHelicopter(item)) {
+    return 'Helicopter'
+  }
+
+  const code = item.categoryCode
+  const labels: Record<number, AircraftCategory> = {
+    1: 'Small / light',
+    2: 'Small / light',
+    3: 'Large',
+    4: 'Large',
+    5: 'Heavy',
+    6: 'High performance',
+    8: 'Glider',
+    9: 'Lighter-than-air',
+    11: 'General aviation',
+    12: 'UAV',
+  }
+  if (code != null && labels[code]) return labels[code]
+
+  const type = `${item.aircraftType ?? ''} ${item.category ?? ''}`.toUpperCase()
+  if (/GLIDER|SAILPLANE/.test(type)) return 'Glider'
+  if (/AIRSHIP|BALLOON|BLIMP/.test(type)) return 'Lighter-than-air'
+  if (/DRONE|UNMANNED|UAV/.test(type)) return 'UAV'
+  if (/CARGO|FREIGHT/.test(type)) return 'Cargo'
+  if (/AIRLINER|PASSENGER/.test(type)) return 'Passenger'
+  if (type.trim()) return 'General aviation'
   return 'Unknown'
 }
 
@@ -66,7 +98,7 @@ function detectHelicopter(item: {
   aircraftType?: string | null
   category?: string | null
 }): boolean {
-  if (item.isHelicopter === true || Number(item.categoryCode) === 8) {
+  if (item.isHelicopter === true || Number(item.categoryCode) === 7) {
     return true
   }
 
@@ -117,7 +149,7 @@ export async function fetchAircraft(
       callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
       registration: item.registration ?? null,
       aircraftType: item.aircraftType ?? null,
-      category: categoryFor(item.onGround),
+      category: categoryFor(item),
       airline: null,
       origin: null,
       destination: null,
@@ -133,7 +165,7 @@ export async function fetchAircraft(
       onGround: item.onGround,
       categoryCode: item.categoryCode ?? null,
       aircraftTypeCode: item.aircraftTypeCode ?? null,
-      isHelicopter: detectHelicopter(item) || /HELICOPTER|ROTORCRAFT|ROTOR-WING/i.test(item.aircraftType ?? ''),
+      isHelicopter: item.isHelicopter === true || Number(item.categoryCode) === 7 || detectHelicopter(item) || /HELICOPTER|ROTORCRAFT|ROTOR-WING/i.test(item.aircraftType ?? ''),
     })),
   }
 }

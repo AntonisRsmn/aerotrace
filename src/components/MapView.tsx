@@ -1157,6 +1157,23 @@ export default function MapView({
       })
     }
 
+    // Apply selection as a render-layer filter as well as source filtering.
+    // This guarantees that only the selected aircraft is drawn, and clearing
+    // selection restores the full fleet immediately.
+    const selectionFilter = selectedIdRef.current
+      ? (['==', ['get', 'id'], selectedIdRef.current] as maplibregl.FilterSpecification)
+      : null
+
+    for (const layerId of [
+      AIRCRAFT_GLOW_LAYER,
+      AIRCRAFT_LAYER,
+      AIRCRAFT_LABEL_LAYER,
+    ]) {
+      if (map.getLayer(layerId)) {
+        map.setFilter(layerId, selectionFilter)
+      }
+    }
+
     updateAircraftSource(map)
     updateHistoryPath(map)
     updateLiveTrail(map)

@@ -19,6 +19,7 @@ type Props = {
   onBoundsChange: (bounds: MapBounds) => void
   showTrails?: boolean
   showLabels?: boolean
+  showAirports?: boolean
 }
 
 type Position = [number, number]
@@ -155,6 +156,7 @@ export default function MapView({
   onBoundsChange,
   showTrails = true,
   showLabels = true,
+  showAirports = true,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
@@ -165,6 +167,7 @@ export default function MapView({
   const onBoundsChangeRef = useRef(onBoundsChange)
   const showTrailsRef = useRef(showTrails)
   const showLabelsRef = useRef(showLabels)
+  const showAirportsRef = useRef(showAirports)
 
   const hoveredIdRef = useRef<string | null>(null)
   const historyRef = useRef<Map<string, Position[]>>(new Map())
@@ -222,6 +225,18 @@ export default function MapView({
       )
     }
   }, [showLabels])
+
+  useEffect(() => {
+    showAirportsRef.current = showAirports
+    const map = mapRef.current
+    if (!map) return
+
+    for (const layerId of [AIRPORT_DOTS_LAYER, AIRPORT_LABELS_LAYER]) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', showAirports ? 'visible' : 'none')
+      }
+    }
+  }, [showAirports])
 
   function getBufferedPosition(id: string, renderTime: number): Position | null {
     const buffer = positionBufferRef.current.get(id)
@@ -471,7 +486,7 @@ export default function MapView({
         // it is deselected; otherwise highlight only the aircraft under the pointer.
         hovered:
           id === selectedIdRef.current || id === hoveredIdRef.current,
-        isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 8 || /HELICOPTER|ROTORCRAFT|ROTORWING/i.test(`${item.aircraftType ?? ''} ${item.category ?? ''}`),
+        isHelicopter: Boolean(item.isHelicopter) || Number(item.categoryCode) === 7 || /HELICOPTER|ROTORCRAFT|ROTORWING/i.test(`${item.aircraftType ?? ''} ${item.category ?? ''}`),
         categoryCode: item.categoryCode ?? null,
         aircraftTypeCode: item.aircraftTypeCode ?? null,
       }
@@ -951,6 +966,7 @@ export default function MapView({
         type: 'circle',
         source: AIRPORT_SOURCE,
         minzoom: 3,
+        layout: { 'visibility': showAirportsRef.current ? 'visible' : 'none' },
         paint: {
           'circle-radius': [
             'interpolate',
@@ -975,6 +991,7 @@ export default function MapView({
         source: AIRPORT_SOURCE,
         minzoom: 5.5,
         layout: {
+          'visibility': showAirportsRef.current ? 'visible' : 'none',
           'text-field': [
             'case',
             ['!=', ['get', 'iata'], ''],
@@ -1416,7 +1433,7 @@ export default function MapView({
     }
 
     ensureMapLayers(map)
-  }, [aircraft, selectedId, showTrails, showLabels])
+  }, [aircraft, selectedId, showTrails, showLabels, showAirports])
 
   useEffect(() => {
     if (!selectedId) {

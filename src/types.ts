@@ -46,4 +46,8 @@ export type Aircraft = {
   routeProgress?: number
   routeDurationSeconds?: number
   routeProgressUpdatedAt?: number
+  /** Historical source label for a replayed demo flight. */
+  replaySource?: string | null
+  /** UTC timestamp of the recorded flight, not the replay clock. */
+  recordedFlightDate?: string | null
 }

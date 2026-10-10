@@ -173,6 +173,7 @@ export default function MapView({
   >(new Map())
   const aircraftAnimationFrameRef = useRef<number | null>(null)
   const aircraftAnimationLastFrameRef = useRef(0)
+  const lastLiveTrailUpdateRef = useRef(0)
 
   useEffect(() => {
     aircraftRef.current = aircraft
@@ -271,8 +272,9 @@ export default function MapView({
 
     const frameTime = performance.now()
 
-    // Cap source updates at 20 FPS; all aircraft are updated in one diff.
-    if (frameTime - aircraftAnimationLastFrameRef.current < 50) {
+    // Cap GeoJSON source diffs at 10 FPS. This is a better trade-off for
+    // large aircraft sets while CSS/map rendering keeps motion visually smooth.
+    if (frameTime - aircraftAnimationLastFrameRef.current < 100) {
       aircraftAnimationFrameRef.current = requestAnimationFrame(() =>
         animateAircraftFrame(map),
       )
@@ -339,7 +341,11 @@ export default function MapView({
       source.updateData({ update: updates })
     }
 
-    if (showTrailsRef.current) {
+    if (
+      showTrailsRef.current &&
+      frameTime - lastLiveTrailUpdateRef.current >= 500
+    ) {
+      lastLiveTrailUpdateRef.current = frameTime
       updateLiveTrail(map)
     }
 
@@ -1124,7 +1130,33 @@ export default function MapView({
       })
     }
 
+    const applyDarkMapBackground = () => {
+      const backgroundLayer = map
+        .getStyle()
+        .layers?.find((layer) => layer.type === 'background')
+
+      if (backgroundLayer) {
+        try {
+          map.setPaintProperty(
+            backgroundLayer.id,
+            'background-color',
+            '#05070b',
+          )
+        } catch (error) {
+          console.warn('[AeroTrace map] Could not set background color:', error)
+        }
+      }
+
+      map.getContainer().style.backgroundColor = '#05070b'
+      map.getCanvas().style.backgroundColor = '#05070b'
+    }
+
+    // Set the fallback immediately, before the remote style finishes loading.
+    map.getContainer().style.backgroundColor = '#05070b'
+    map.getCanvas().style.backgroundColor = '#05070b'
+
     const onLoad = () => {
+      applyDarkMapBackground()
       ensureMapLayers(map)
       reportBounds()
       void loadAirports(map)
@@ -1170,6 +1202,7 @@ export default function MapView({
       }
 
       aircraftAnimationsRef.current.clear()
+      lastLiveTrailUpdateRef.current = 0
       aircraftPositionsRef.current.clear()
       aircraftTargetsRef.current.clear()
       aircraftMotionRef.current.clear()

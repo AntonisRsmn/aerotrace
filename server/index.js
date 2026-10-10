@@ -517,7 +517,10 @@ function normalizeState(state, nowSeconds) {
         ? Math.round(verticalRate * 196.8504)
         : null,
     squawk: typeof squawk === 'string' ? squawk : null,
-    categoryCode: Number.isFinite(Number(category)) ? Number(category) : null,
+    categoryCode:
+      category == null || category === '' || !Number.isFinite(Number(category))
+        ? null
+        : Number(category),
     isHelicopter: Number(category) === 8,
     lastSeenSeconds:
       typeof contactTime === 'number'

@@ -798,6 +798,12 @@ export default function App() {
                     {selectedAircraft.originCountry || 'Unavailable'}
                   </strong>
                 </div>
+                {selectedAircraft.isDemo && (
+                  <div className="detail-line">
+                    <span>Track source</span>
+                    <strong>{selectedAircraft.replaySource || 'Historical ADS-B archive'}</strong>
+                  </div>
+                )}
                 {selectedAircraft.recordedFlightDate && (
                   <div className="detail-line">
                     <span>Recorded flight date</span>

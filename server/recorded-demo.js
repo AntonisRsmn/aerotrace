@@ -174,9 +174,7 @@ function replayFlight(template, index, nowSeconds) {
   const nextAltitude = next.altitudeFt
   const verticalRateFpm = template.verticalRates.length
     ? template.verticalRates[Math.min(template.verticalRates.length - 1, Math.floor(progress * template.verticalRates.length))]
-    : altitude == null || previousAltitude == null || nextAltitude == null
-      ? null
-      : Math.round((nextAltitude - previousAltitude) * 30)
+    : null
   const recordedGroundSpeed = template.groundSpeed.length
     ? template.groundSpeed[Math.min(template.groundSpeed.length - 1, Math.floor(progress * template.groundSpeed.length))]
     : null
@@ -188,7 +186,7 @@ function replayFlight(template, index, nowSeconds) {
     : /^(H|R22|R44|AS50|AS55|EC)/.test(template.aircraftType || '')
       ? 'Helicopter'
       : 'Passenger'
-  const isGround = altitude != null && altitude < 1000
+  const isGround = altitude != null ? altitude <= 0 : null
   const id = `replay-${template.icao24}-${index}-${Math.abs(template.startTime)}`
 
   return {
@@ -202,11 +200,11 @@ function replayFlight(template, index, nowSeconds) {
     latitude: Number(point.latitude.toFixed(5)),
     altitudeFt: altitude,
     onGround: isGround,
-    speedKt: recordedGroundSpeed == null ? 250 + Math.round(seededNumber(`${template.flightId}:speed`) * 220) : Math.round(recordedGroundSpeed),
+    speedKt: recordedGroundSpeed == null ? null : Math.round(recordedGroundSpeed),
     heading: recordedHeading == null ? Math.round(bearing(point, next)) % 360 : Math.round(recordedHeading) % 360,
     verticalRateFpm,
     squawk: template.squawk,
-    lastSeenSeconds: 0,
+    lastSeenSeconds: null,
     registration: template.registration,
     aircraftType: template.model || template.aircraftType,
     aircraftTypeCode: template.aircraftType,

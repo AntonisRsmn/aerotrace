@@ -1,6 +1,6 @@
 # AeroTrace
 
-Dark-themed worldwide aircraft tracking UI prototype. Current aircraft are **fictional sample records**; this version does not fetch live aircraft data.
+Dark-themed worldwide aircraft tracking dashboard with switchable **demo** and **live** aircraft feeds. Demo mode generates clearly labeled simulated flights locally; live mode uses the existing server-side provider integration.
 
 ## Requirements
 
@@ -11,10 +11,27 @@ Dark-themed worldwide aircraft tracking UI prototype. Current aircraft are **fic
 
 ```bash
 npm install
+```
+
+Create a `.env` file in the project root:
+
+```dotenv
+# Use simulated traffic without calling live aircraft-position providers
+AEROTRACE_MODE=dev
+DEMO_AIRCRAFT_COUNT=1000
+```
+
+Start the API and frontend in **two separate terminals**:
+
+```bash
+npm run dev:api
+```
+
+```bash
 npm run dev
 ```
 
-Open the local URL printed by Vite (normally `http://localhost:5173`).
+Open the local URL printed by Vite (normally `http://localhost:5173`). Demo mode still uses the map tiles and airport dataset required to draw the basemap and airports; it does not call live aircraft-position or aircraft-detail providers.
 
 ## Production build
 
@@ -26,12 +43,33 @@ npm run preview
 ## Current features
 
 - Dark, responsive aviation dashboard
-- Interactive MapLibre map with sample aircraft markers
+- Interactive MapLibre map with 1000 configurable, moving simulated aircraft across worldwide airport-to-airport routes in demo mode
+- Explicit `DEMO DATA` and generated-count labels so simulated traffic is not mistaken for live traffic
+- `AEROTRACE_MODE=dev` or `demo` for simulation; `AEROTRACE_MODE=real` or `live` for live provider-backed aircraft
+- `DEMO_AIRCRAFT_COUNT` to configure 100–3000 simulated aircraft
 - Search by callsign, registration, aircraft type, or origin/destination
 - Filter by aircraft category
 - Select a map marker or list item to view details
 - Sample aircraft list and count
 - Data status clearly marked as DEMO DATA
+
+## Switching between demo and live data
+
+Edit `.env` and restart `npm run dev:api` after changing the mode:
+
+```dotenv
+# Showcase mode — does not call live aircraft-position providers
+AEROTRACE_MODE=dev
+DEMO_AIRCRAFT_COUNT=1000
+```
+
+For real-time aircraft data, use:
+
+```dotenv
+AEROTRACE_MODE=real
+```
+
+`dev`/`demo` are aliases for simulation. `real`/`live` enable the live provider pipeline. If `DEMO_AIRCRAFT_COUNT` is omitted, the default is 1000; the server clamps the value to 100–3000. Never describe simulated positions as real aircraft data. Keep `.env` local and do not commit provider credentials.
 
 ## Architecture
 

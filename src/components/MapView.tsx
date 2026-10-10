@@ -707,32 +707,16 @@ export default function MapView({
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: {
-        version: 8,
-        sources: {
-          basemap: {
-            type: 'raster',
-            tiles: [
-              'https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-            ],
-            tileSize: 256,
-            attribution:
-              '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a> · Airport data: <a href="https://ourairports.com/data/">OurAirports</a>',
-          },
-        },
-        layers: [
-          {
-            id: 'basemap',
-            type: 'raster',
-            source: 'basemap',
-          },
-        ],
-      },
+      // OpenFreeMap's dark style is free to use without an API key.
+      // Keep custom airport attribution visible alongside the style's OSM attribution.
+      style: 'https://tiles.openfreemap.org/styles/dark',
       center: [15, 48],
       zoom: 3.2,
       minZoom: 2,
       maxZoom: 16,
-      attributionControl: {},
+      attributionControl: {
+        customAttribution: 'Airport data © OurAirports',
+      },
     })
 
     mapRef.current = map

@@ -465,7 +465,7 @@ export default function MapView({
           item.speedKt != null && Number.isFinite(item.speedKt)
             ? item.speedKt
             : null,
-        onGround: item.onGround,
+        onGround: item.onGround ?? null,
         selected: id === selectedIdRef.current,
         // Keep the selected aircraft in its highlighted, labeled state until
         // it is deselected; otherwise highlight only the aircraft under the pointer.
@@ -497,7 +497,7 @@ export default function MapView({
           observedAt: now - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
           speedKt: properties.speedKt,
           heading: item.heading,
-          onGround: item.onGround,
+          onGround: item.onGround ?? null,
         })
         addPositionObservation(
           id,
@@ -536,12 +536,12 @@ export default function MapView({
           observedAt: now - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
           speedKt: properties.speedKt,
           heading: item.heading,
-          onGround: item.onGround,
+          onGround: item.onGround ?? null,
         })
       } else if (motion) {
         motion.speedKt = properties.speedKt
         motion.heading = item.heading
-        motion.onGround = item.onGround
+        motion.onGround = item.onGround ?? null
       }
 
       addPositionObservation(
@@ -1262,13 +1262,18 @@ export default function MapView({
     // Labels remain hover-only for the fleet, but the selected aircraft
     // stays highlighted and labeled until selection is cleared.
     if (map.getLayer(AIRCRAFT_LABEL_LAYER)) {
-      map.setFilter(AIRCRAFT_LABEL_LAYER, [
-        'any',
-        ['==', ['get', 'hovered'], true],
-        ...(selectedIdRef.current
-          ? [['==', ['get', 'id'], selectedIdRef.current]]
-          : []),
-      ])
+      const labelFilter = selectedIdRef.current
+        ? [
+            'any',
+            ['==', ['get', 'hovered'], true],
+            ['==', ['get', 'id'], selectedIdRef.current],
+          ]
+        : ['==', ['get', 'hovered'], true]
+
+      map.setFilter(
+        AIRCRAFT_LABEL_LAYER,
+        labelFilter as import('maplibre-gl').FilterSpecification,
+      )
     }
 
     updateAircraftSource(map)

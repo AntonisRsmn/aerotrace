@@ -647,8 +647,11 @@ export default function MapView({
       return
     }
 
-    const positions =
-      historyRef.current.get(selectedAircraft.id) ?? []
+    // In demo mode show the complete planned airport-to-airport route
+    // immediately, rather than waiting for the aircraft to accumulate history.
+    const positions = selectedAircraft.isDemo && selectedAircraft.routeCoordinates?.length
+      ? selectedAircraft.routeCoordinates
+      : historyRef.current.get(selectedAircraft.id) ?? []
 
     if (positions.length < 2) {
       source.setData(emptyLines)

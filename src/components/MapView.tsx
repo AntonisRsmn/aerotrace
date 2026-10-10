@@ -50,6 +50,7 @@ type AircraftProperties = {
   onGround: boolean | null
   selected: boolean
   hovered: boolean
+  isHelicopter: boolean
 }
 
 type AirportProperties = {
@@ -75,6 +76,8 @@ const LIVE_TRAIL_LAYER = 'aerotrace-live-trail-line'
 
 const PLANE_IMAGE = 'aerotrace-plane-blue-v4'
 const PLANE_IMAGE_HOVER = 'aerotrace-plane-yellow-v4'
+const HELICOPTER_IMAGE = 'aerotrace-helicopter-blue-v1'
+const HELICOPTER_IMAGE_HOVER = 'aerotrace-helicopter-yellow-v1'
 
 const emptyLines: FeatureCollection<LineString> = {
   type: 'FeatureCollection',
@@ -405,6 +408,7 @@ export default function MapView({
         // after the pointer moves away from the marker.
         hovered:
           id === hoveredIdRef.current || id === selectedIdRef.current,
+        isHelicopter: Boolean(item.isHelicopter),
       }
 
       nextIds.add(id)
@@ -447,6 +451,7 @@ export default function MapView({
           { key: 'onGround', value: properties.onGround },
           { key: 'selected', value: properties.selected },
           { key: 'hovered', value: properties.hovered },
+          { key: 'isHelicopter', value: properties.isHelicopter },
         ],
       })
 
@@ -683,6 +688,69 @@ export default function MapView({
       console.error(
         `[AeroTrace] Could not load aircraft icon: ${imageName}`,
       )
+    }
+
+    image.src = url
+  }
+
+  function createHelicopterImage(
+    map: maplibregl.Map,
+    imageName: string,
+    fillColor: string,
+  ) {
+    if (
+      mapRef.current !== map ||
+      map.hasImage(imageName) ||
+      imageLoadingRef.current.has(imageName)
+    ) {
+      return
+    }
+
+    imageLoadingRef.current.add(imageName)
+
+    // Top-down helicopter silhouette with main rotor and tail rotor.
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+        <g fill="none" stroke="#07111F" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M32 18 L32 8 M17 8 H47 M32 17 L32 44 L45 53 L45 57 L32 49 L19 57 L19 53 L32 44" />
+          <path d="M25 29 C25 23 39 23 39 29 L39 39 C39 45 25 45 25 39 Z" fill="${fillColor}" />
+          <path d="M32 18 V8 M27 8 H37 M47 52 H56" />
+        </g>
+        <g fill="${fillColor}" stroke="#07111F" stroke-width="2.5" stroke-linejoin="round">
+          <path d="M32 18 C38 18 40 24 40 31 V39 C40 45 36 48 32 48 C28 48 24 45 24 39 V31 C24 24 26 18 32 18 Z" />
+          <path d="M29 26 L35 26 L37 36 L27 36 Z" fill="#D9F2FF" />
+          <path d="M30 46 L34 46 L36 55 L28 55 Z" />
+          <path d="M32 6 L34 8 L32 10 L30 8 Z" />
+        </g>
+        <g stroke="${fillColor}" stroke-width="2.2" stroke-linecap="round">
+          <path d="M10 8 H54" />
+          <path d="M54 8 L51 5 M54 8 L51 11" />
+        </g>
+      </svg>
+    `
+
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
+    const image = new Image()
+
+    image.onload = () => {
+      try {
+        if (mapRef.current === map && map.isStyleLoaded() && !map.hasImage(imageName)) {
+          map.addImage(imageName, image, { pixelRatio: 2 })
+        }
+      } catch (error) {
+        console.error('[AeroTrace] Could not register helicopter icon:', error)
+      } finally {
+        URL.revokeObjectURL(url)
+        imageLoadingRef.current.delete(imageName)
+      }
+
+      if (mapRef.current === map && map.isStyleLoaded()) ensureMapLayers(map)
+    }
+
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      imageLoadingRef.current.delete(imageName)
+      console.error(`[AeroTrace] Could not load helicopter icon: ${imageName}`)
     }
 
     image.src = url
@@ -932,9 +1000,19 @@ export default function MapView({
       createPlaneImage(map, PLANE_IMAGE_HOVER, '#FFD43B')
     }
 
+    if (!map.hasImage(HELICOPTER_IMAGE)) {
+      createHelicopterImage(map, HELICOPTER_IMAGE, '#258BFF')
+    }
+
+    if (!map.hasImage(HELICOPTER_IMAGE_HOVER)) {
+      createHelicopterImage(map, HELICOPTER_IMAGE_HOVER, '#FFD43B')
+    }
+
     if (
       !map.hasImage(PLANE_IMAGE) ||
-      !map.hasImage(PLANE_IMAGE_HOVER)
+      !map.hasImage(PLANE_IMAGE_HOVER) ||
+      !map.hasImage(HELICOPTER_IMAGE) ||
+      !map.hasImage(HELICOPTER_IMAGE_HOVER)
     ) {
       return
     }
@@ -974,9 +1052,19 @@ export default function MapView({
         layout: {
           'icon-image': [
             'case',
-            ['boolean', ['get', 'hovered'], false],
-            PLANE_IMAGE_HOVER,
-            PLANE_IMAGE,
+            ['boolean', ['get', 'isHelicopter'], false],
+            [
+              'case',
+              ['boolean', ['get', 'hovered'], false],
+              HELICOPTER_IMAGE_HOVER,
+              HELICOPTER_IMAGE,
+            ],
+            [
+              'case',
+              ['boolean', ['get', 'hovered'], false],
+              PLANE_IMAGE_HOVER,
+              PLANE_IMAGE,
+            ],
           ],
           'icon-size': [
             'case',

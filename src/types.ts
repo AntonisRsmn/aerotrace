@@ -29,4 +29,5 @@ export type Aircraft = {
   onGround?: boolean | null
   isHelicopter?: boolean
   categoryCode?: number | null
+  aircraftTypeCode?: string | null
 }

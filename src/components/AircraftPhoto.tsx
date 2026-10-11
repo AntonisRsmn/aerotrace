@@ -189,9 +189,10 @@ export default function AircraftPhoto({
               style={{
                 display: 'block',
                 width: '100%',
-                height: 175,
-                objectFit: 'cover',
+                height: 190,
+                objectFit: 'contain',
                 objectPosition: 'center',
+                background: '#080d14',
               }}
             />
           </a>

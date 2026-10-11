@@ -1485,19 +1485,27 @@ function normalizePlanespottersPhoto(payload, matchedBy) {
       (typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null) ||
       (typeof item?.thumbnail === 'string' ? item.thumbnail : null) ||
       item?.src
-    const link = item?.link || item?.url
+    // Planespotters' public response does not guarantee a page link on every
+    // photo record. The image itself is sufficient; build a stable provider
+    // page link from the aircraft identity when link/url is absent.
+    const rawLink = item?.link || item?.url
+    const fallbackLink = matchedBy === 'registration' && item?.registration
+      ? `https://www.planespotters.net/search?q=${encodeURIComponent(item.registration)}`
+      : null
+    const link = typeof rawLink === 'string' ? rawLink : fallbackLink
 
-    if (typeof src !== 'string' || typeof link !== 'string') continue
+    if (typeof src !== 'string') continue
 
     try {
-      if (new URL(src).protocol !== 'https:' || new URL(link).protocol !== 'https:') continue
+      if (new URL(src).protocol !== 'https:') continue
+      if (link && new URL(link).protocol !== 'https:') continue
     } catch {
       continue
     }
 
     return {
       src,
-      link,
+      link: link || 'https://www.planespotters.net/',
       photographer:
         typeof item.photographer === 'string' && item.photographer.trim()
           ? item.photographer.trim()
@@ -1810,7 +1818,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v3-live',
+      'photo-v4-live',
       icao24,
       registration,
       callsign,

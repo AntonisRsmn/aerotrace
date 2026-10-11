@@ -1431,7 +1431,9 @@ async function proxyAircraftPhotoImage(url, response) {
   const allowedPhotoHost =
     parsed.hostname === 'planespotters.net' ||
     parsed.hostname.endsWith('.planespotters.net') ||
-    parsed.hostname === 'upload.wikimedia.org'
+    parsed.hostname === 'upload.wikimedia.org' ||
+    parsed.hostname === 'airport-data.com' ||
+    parsed.hostname.endsWith('.airport-data.com')
 
   if (parsed.protocol !== 'https:' || !allowedPhotoHost) {
     return sendJson(response, 400, { error: 'Unsupported photo host.' })
@@ -1529,6 +1531,79 @@ function normalizePlanespottersPhoto(payload, matchedBy) {
   return null
 }
 
+
+function normalizeAirportDataPhoto(payload, matchedBy) {
+  const items = Array.isArray(payload?.data) ? payload.data : []
+
+  for (const item of items) {
+    const src = typeof item?.image === 'string' ? item.image.trim() : ''
+    if (!src) continue
+
+    try {
+      if (new URL(src).protocol !== 'https:') continue
+    } catch {
+      continue
+    }
+
+    const link =
+      typeof item?.link === 'string' && item.link.startsWith('https://')
+        ? item.link
+        : 'https://airport-data.com/'
+
+    return {
+      src,
+      link,
+      photographer:
+        typeof item?.photographer === 'string' && item.photographer.trim()
+          ? item.photographer.trim()
+          : 'Unknown photographer',
+      source: 'Airport-Data.com',
+      match: 'exact',
+      matchedBy,
+      representative: false,
+      license: null,
+      licenseUrl: null,
+    }
+  }
+
+  return null
+}
+
+async function lookupAirportDataPhoto(icao24, registration) {
+  const params = new URLSearchParams({
+    m: icao24.toUpperCase(),
+    n: '5',
+  })
+
+  if (registration) params.set('r', registration)
+
+  try {
+    const upstream = await fetch(
+      `https://airport-data.com/api/ac_thumb.json?${params}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent':
+            'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
+        },
+        signal: AbortSignal.timeout(8000),
+      },
+    )
+
+    if (!upstream.ok) return null
+
+    return normalizeAirportDataPhoto(
+      await upstream.json(),
+      registration ? 'registration/icao24' : 'icao24',
+    )
+  } catch (error) {
+    console.warn(
+      '[AeroTrace Airport-Data photo]',
+      error instanceof Error ? error.message : error,
+    )
+    return null
+  }
+}
 
 async function lookupPlanespottersPagePhoto(icao24, registration) {
   const pages = [
@@ -1664,6 +1739,11 @@ async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
       error instanceof Error ? error.message : error,
     )
   }
+
+  // Airport-Data provides a documented, no-key aircraft thumbnail
+  // endpoint keyed by Mode-S/ICAO24, with an optional registration filter.
+  const airportDataPhoto = await lookupAirportDataPhoto(icao24, registration)
+  if (airportDataPhoto) return airportDataPhoto
 
   const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
   if (pagePhoto) return pagePhoto
@@ -1893,7 +1973,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v6-live',
+      'photo-v7-live',
       icao24,
       registration,
       callsign,

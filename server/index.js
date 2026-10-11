@@ -1753,25 +1753,7 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         }
       }
 
-      // If a photo page is unavailable, fall back to metadata on the aircraft
-      // page itself. These are the same canonical image metadata used when
-      // the exact Planespotters aircraft page is shared.
-      const decodeHtmlUrl = (value) =>
-        value
-          .replace(/&amp;/g, '&')
-          .replace(/\\u0026/g, '&')
-          .replace(/\\\//g, '/')
-          .trim()
-
-      const isHttpsUrl = (value) => {
-        if (typeof value !== 'string' || !value.trim()) return false
-        try {
-          return new URL(decodeHtmlUrl(value)).protocol === 'https:'
-        } catch {
-          return false
-        }
-      }
-
+      // If the photo page is unavailable, continue with the aircraft page metadata.
       // Prefer the page preview image, then inspect the actual photo gallery.
       // Planespotters serves gallery images from cdn.planespotters.net and
       // may expose them through src, data-src, data-original, or srcset.

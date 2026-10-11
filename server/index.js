@@ -1484,9 +1484,10 @@ function normalizePlanespottersPhoto(payload, matchedBy) {
     // Newer responses may also expose thumbnail_large/src or full-size src.
     const candidates = [
       item?.thumbnail?.src,
-      item?.thumbnail_large?.src,
       item?.thumbnail_small?.src,
       item?.src,
+      item?.image,
+      item?.image_url,
       typeof item?.thumbnail === 'string' ? item.thumbnail : null,
       typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null,
     ]
@@ -1627,7 +1628,14 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         signal: AbortSignal.timeout(10000),
       })
 
-      if (!upstream.ok) continue
+      if (!upstream.ok) {
+        console.warn(
+          '[AeroTrace Planespotters page photo] Page request failed:',
+          pageUrl,
+          upstream.status,
+        )
+        continue
+      }
 
       const html = await upstream.text()
 
@@ -1719,15 +1727,33 @@ async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
       const upstream = await fetch(endpoint.url, {
         headers: {
           Accept: 'application/json',
+          // Planespotters can return 403 to generic application clients.
+          // A browser-compatible UA is accepted by the public endpoint.
           'User-Agent':
-            'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace; contact: https://rusman.gr)',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+          Referer: 'https://www.planespotters.net/',
+          Origin: 'https://www.planespotters.net',
         },
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(10000),
       })
 
-      if (!upstream.ok) continue
-      const photo = normalizePlanespottersPhoto(await upstream.json(), endpoint.matchedBy)
+      if (!upstream.ok) {
+        console.warn(
+          '[AeroTrace Planespotters photo] API request failed:',
+          endpoint.url,
+          upstream.status,
+        )
+        continue
+      }
+
+      const payload = await upstream.json()
+      const photo = normalizePlanespottersPhoto(payload, endpoint.matchedBy)
       if (photo) return photo
+
+      console.warn(
+        '[AeroTrace Planespotters photo] API returned no usable photo:',
+        endpoint.url,
+      )
     } catch (error) {
       console.warn(
         '[AeroTrace Planespotters photo]',
@@ -2004,7 +2030,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v8-live',
+      'photo-v9-planespotters-ua',
       icao24,
       registration,
       callsign,

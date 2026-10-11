@@ -3,8 +3,17 @@ import { createServer } from 'node:http'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { generateDemoAircraft } from './recorded-demo.js'
 
 const PORT = Number(process.env.PORT || process.env.API_PORT || 3000)
+
+const AEROTRACE_MODE = ['demo', 'dev', 'hybrid'].includes(
+  (process.env.AEROTRACE_MODE || 'live').trim().toLowerCase(),
+) ? (['dev'].includes((process.env.AEROTRACE_MODE || '').trim().toLowerCase()) ? 'demo' : (process.env.AEROTRACE_MODE || '').trim().toLowerCase()) : 'live'
+const DEMO_AIRCRAFT_COUNT = Math.max(
+  100,
+  Math.min(3000, Number.parseInt(process.env.DEMO_AIRCRAFT_COUNT || '1000', 10) || 1000),
+)
 
 const OPENSKY_API = 'https://opensky-network.org/api'
 const TOKEN_URL =
@@ -14,6 +23,7 @@ const ADSBDB_API = 'https://api.adsbdb.com/v0'
 const ADSB_LOL_API = 'https://api.adsb.lol'
 
 const CACHE_TTL_MS = 15_000
+const HYBRID_CACHE_TTL_MS = 30_000
 const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000
 const TIMEOUT_COOLDOWN_MS = 60_000
 const DETAILS_CACHE_TTL_MS = 6 * 60 * 60 * 1000
@@ -46,6 +56,8 @@ const aircraftTypeCache = new Map()
 const aircraftTypeRequestsInFlight = new Map()
 const aircraftPhotoCache = new Map()
 const aircraftRequestsInFlight = new Map()
+const hybridAircraftCache = new Map()
+const hybridAircraftRequestsInFlight = new Map()
 const openSkyTrackCache = new Map()
 const openSkyTrackRequestsInFlight = new Map()
 
@@ -1933,6 +1945,98 @@ const server = createServer(async (request, response) => {
     bounds = getBounds(url)
   } catch (error) {
     return sendJson(response, 400, { error: error.message })
+  }
+
+  // Hybrid mode combines real, provider-reported aircraft with simulated
+  // traffic. Real aircraft retain their actual provider data; synthetic
+  // aircraft are marked isDemo so the UI can identify them separately.
+  if (AEROTRACE_MODE === 'hybrid') {
+    const cacheKey = [
+      bounds.lamin,
+      bounds.lamax,
+      bounds.lomin,
+      bounds.lomax,
+    ].map((value) => value.toFixed(1)).join(':')
+    const now = Date.now()
+    const cached = hybridAircraftCache.get(cacheKey)
+
+    if (cached && now - cached.cachedAt < HYBRID_CACHE_TTL_MS) {
+      return sendJson(response, 200, { ...cached.data, cached: true })
+    }
+
+    let pending = hybridAircraftRequestsInFlight.get(cacheKey)
+    if (!pending) {
+      pending = (async () => {
+        let live = { source: 'Live feed unavailable', time: Math.floor(Date.now() / 1000), aircraft: [] }
+        let liveAvailable = false
+
+        try {
+          live = await fetchAircraft(bounds)
+          liveAvailable = true
+        } catch (error) {
+          console.warn(
+            '[AeroTrace hybrid] Live aircraft feed unavailable; serving simulated traffic too.',
+            error instanceof Error ? error.message : error,
+          )
+        }
+
+        const simulated = await generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
+        const data = {
+          source: liveAvailable ? 'Live aircraft + AeroTrace simulation' : 'AeroTrace simulation (live feed unavailable)',
+          mode: 'hybrid',
+          time: live.time ?? Math.floor(Date.now() / 1000),
+          aircraft: [...live.aircraft, ...simulated.aircraft],
+          liveAircraftCount: live.aircraft.length,
+          totalSimulated: simulated.totalSimulated,
+          liveAvailable,
+        }
+        hybridAircraftCache.set(cacheKey, { data, cachedAt: Date.now() })
+
+        while (hybridAircraftCache.size > 100) {
+          const oldestKey = hybridAircraftCache.keys().next().value
+          if (oldestKey === undefined) break
+          hybridAircraftCache.delete(oldestKey)
+        }
+        return data
+      })()
+      hybridAircraftRequestsInFlight.set(cacheKey, pending)
+    }
+
+    try {
+      const data = await pending
+      return sendJson(response, 200, {
+        ...data,
+        cached: hybridAircraftCache.get(cacheKey)?.cachedAt !== undefined &&
+          Date.now() - hybridAircraftCache.get(cacheKey).cachedAt < 1000,
+      })
+    } finally {
+      if (hybridAircraftRequestsInFlight.get(cacheKey) === pending) {
+        hybridAircraftRequestsInFlight.delete(cacheKey)
+      }
+    }
+  }
+
+  // Demo mode is intentionally isolated from every live aircraft provider.
+  // Replay archived ADS-B tracks only. No live aircraft-position provider is called in demo mode.
+  if (AEROTRACE_MODE === 'demo') {
+    try {
+      const simulated = await generateDemoAircraft(bounds, DEMO_AIRCRAFT_COUNT)
+      return sendJson(response, 200, {
+        ...simulated,
+        cached: false,
+      })
+    } catch (error) {
+      console.error('[AeroTrace demo replay] Historical track source unavailable:', error instanceof Error ? error.message : error)
+      return sendJson(response, 503, {
+        source: 'AeroTrace Historical Flight Replay',
+        mode: 'demo',
+        time: Math.floor(Date.now() / 1000),
+        aircraft: [],
+        totalSimulated: 0,
+        replayOnly: true,
+        error: 'Historical flight tracks are temporarily unavailable. Please retry shortly.',
+      })
+    }
   }
 
   const cacheKey = [

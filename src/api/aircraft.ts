@@ -29,13 +29,23 @@ type OpenSkyAircraft = {
   registration?: string | null
   aircraftType?: string | null
   aircraftTypeCode?: string | null
-  categoryCode?: number | null
-  category?: string | null
-  isHelicopter?: boolean
+  origin?: string | null
+  destination?: string | null
+  isDemo?: boolean
+  routeCoordinates?: [number, number][]
+  routeProgress?: number
+  routeDurationSeconds?: number
+  routeProgressUpdatedAt?: number
+  replaySource?: string | null
+  recordedFlightDate?: string | null
 }
 
 type AircraftResponse = {
   source?: string
+  mode?: 'demo' | 'live' | 'hybrid'
+  totalSimulated?: number
+  liveAircraftCount?: number
+  liveAvailable?: boolean
   time?: number
   cached?: boolean
   aircraft: OpenSkyAircraft[]
@@ -44,8 +54,12 @@ type AircraftResponse = {
 
 export type LiveAircraftResult = {
   source: string
+  mode: 'demo' | 'live' | 'hybrid'
   time: number
   cached: boolean
+  totalSimulated?: number
+  liveAircraftCount?: number
+  liveAvailable?: boolean
   aircraft: Aircraft[]
 }
 
@@ -143,18 +157,24 @@ export async function fetchAircraft(
 
   return {
     source: payload.source || 'OpenSky Network',
+    mode: payload.mode === 'demo' || payload.mode === 'hybrid' ? payload.mode : 'live',
+    totalSimulated: payload.totalSimulated,
+    liveAircraftCount: payload.liveAircraftCount,
+    liveAvailable: payload.liveAvailable,
     time: payload.time ?? Math.floor(Date.now() / 1000),
     cached: Boolean(payload.cached),
     aircraft: payload.aircraft.map((item) => ({
-      id: item.icao24,
+      id: item.id || item.icao24,
       icao24: item.icao24,
       callsign: item.callsign?.trim() || item.icao24.toUpperCase(),
       registration: item.registration ?? null,
       aircraftType: item.aircraftType ?? null,
-      category: categoryFor(item),
+      category: item.isDemo && item.category
+        ? item.category as AircraftCategory
+        : categoryFor(item),
       airline: item.airline ?? null,
-      origin: null,
-      destination: null,
+      origin: item.origin ?? null,
+      destination: item.destination ?? null,
       altitudeFt: item.altitudeFt,
       speedKt: item.speedKt,
       heading: item.heading,
@@ -167,6 +187,13 @@ export async function fetchAircraft(
       onGround: item.onGround,
       categoryCode: item.categoryCode ?? null,
       aircraftTypeCode: item.aircraftTypeCode ?? null,
+      isDemo: item.isDemo === true,
+      routeCoordinates: item.routeCoordinates ?? [],
+      routeProgress: item.routeProgress,
+      routeDurationSeconds: item.routeDurationSeconds,
+      routeProgressUpdatedAt: item.routeProgressUpdatedAt,
+      replaySource: item.replaySource ?? null,
+      recordedFlightDate: item.recordedFlightDate ?? null,
       isHelicopter: item.isHelicopter === true || Number(item.categoryCode) === 7 || detectHelicopter(item) || /HELICOPTER|ROTORCRAFT|ROTOR-WING/i.test(item.aircraftType ?? ''),
     })),
   }

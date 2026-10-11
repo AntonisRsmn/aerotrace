@@ -38,4 +38,16 @@ export type Aircraft = {
   isHelicopter?: boolean
   categoryCode?: number | null
   aircraftTypeCode?: string | null
+  /** True when this aircraft is simulated or replayed for demo mode. */
+  isDemo?: boolean
+  /** Recorded or simulated route coordinates [longitude, latitude]. */
+  routeCoordinates?: [number, number][]
+  /** Progress along the route at routeProgressUpdatedAt (0-1). */
+  routeProgress?: number
+  routeDurationSeconds?: number
+  routeProgressUpdatedAt?: number
+  /** Historical source label for a replayed demo flight. */
+  replaySource?: string | null
+  /** UTC timestamp of the recorded flight, not the replay clock. */
+  recordedFlightDate?: string | null
 }

@@ -1,6 +1,6 @@
 # AeroTrace
 
-Dark-themed worldwide aircraft tracking UI prototype. Current aircraft are **fictional sample records**; this version does not fetch live aircraft data.
+Dark-themed worldwide aircraft tracking dashboard with **live**, **hybrid**, and **demo replay** modes. Demo mode replays archived ADS-B flight tracks with real recorded callsigns, aircraft identity, route geometry, and available movement samples; it does not display live aircraft positions.
 
 ## Requirements
 
@@ -11,10 +11,27 @@ Dark-themed worldwide aircraft tracking UI prototype. Current aircraft are **fic
 
 ```bash
 npm install
+```
+
+Create a `.env` file in the project root:
+
+```dotenv
+# Use simulated traffic without calling live aircraft-position providers
+AEROTRACE_MODE=demo
+DEMO_AIRCRAFT_COUNT=1000
+```
+
+Start the API and frontend in **two separate terminals**:
+
+```bash
+npm run dev:api
+```
+
+```bash
 npm run dev
 ```
 
-Open the local URL printed by Vite (normally `http://localhost:5173`).
+Open the local URL printed by Vite (normally `http://localhost:5173`). Demo mode downloads a cached batch of historical tracks from adsb.aero on the server, then replays those records as demo traffic. It does not query live aircraft-position providers. Basemap tiles still require network access.
 
 ## Production build
 
@@ -26,12 +43,35 @@ npm run preview
 ## Current features
 
 - Dark, responsive aviation dashboard
-- Interactive MapLibre map with sample aircraft markers
+- Interactive MapLibre map that replays recorded ADS-B flight paths, including route bends rather than generated straight-line routes
+- Recorded callsigns, aircraft registrations/types, departure and arrival airport identifiers, and observed altitude/track/speed samples when supplied by the archive
+- Replay markers move along historical recorded routes; displayed positions are playback positions, not live positions
+- Explicit `DEMO REPLAY` labeling so historical replay is not mistaken for live traffic
+- `AEROTRACE_MODE=live` for provider-reported aircraft, `hybrid` for live aircraft plus historical replay, or `demo` for historical replay only
+- `DEMO_AIRCRAFT_COUNT` to configure 100–3000 simulated aircraft in hybrid/demo mode
 - Search by callsign, registration, aircraft type, or origin/destination
 - Filter by aircraft category
 - Select a map marker or list item to view details
 - Sample aircraft list and count
 - Data status clearly marked as DEMO DATA
+
+## Switching aircraft data modes
+
+Edit `.env` and restart `npm run dev:api` after changing the mode:
+
+```dotenv
+# Real aircraft plus simulated background traffic
+AEROTRACE_MODE=hybrid
+DEMO_AIRCRAFT_COUNT=1000
+```
+
+Available modes:
+
+- `hybrid`: live provider-reported aircraft plus historical replay tracks; the interface shows live and replay counts separately.
+- `live`: only provider-reported real aircraft.
+- `demo` (or `dev`): historical recorded tracks replayed as demo traffic; no live aircraft-position provider calls.
+
+`real` is accepted as a live-mode alias. If `DEMO_AIRCRAFT_COUNT` is omitted, the default is 1000; the server clamps the value to 100–3000. Historical replay traffic is clearly labeled and must not be mistaken for actual live positions. Keep `.env` local and do not commit provider credentials.
 
 ## Architecture
 
@@ -56,7 +96,7 @@ MapLibre GL JS is open-source, but map tile/style services have separate terms, 
 
 ## Live aircraft API licensing decision
 
-No live provider is selected or called in this prototype.
+Demo mode uses the public historical archive API at https://adsb.aero/api/docs. The server caches successful track batches in memory and refreshes periodically. Verify the archive's current terms, attribution, and redistribution permissions before commercial/public launch.
 
 - **OpenSky Network:** its current terms say operational REST API integration into a live product/service/automated system requires prior written agreement, and commercial use requires written permission/license. Do not use it as the production source without written approval. See https://opensky-network.org/about/terms-of-use
 - **ADS-B Exchange:** its API is a commercial product and its data-use policy restricts redistributing or publicly sharing data except where authorized. Not a fit for a free-only plan without explicit authorization. See https://www.adsbexchange.com/api/aircraft/v2/docs and https://support.adsbexchange.com/hc/en-us/articles/37364077703693-What-is-ADS-B-Exchange-s-data-use-policy
@@ -67,3 +107,26 @@ A future live-data backend should be a separate service (for example, Node.js + 
 ## Future vessel support
 
 The shared application model can later be extended with a discriminated target type (`aircraft` / `vessel`) and an AIS provider adapter. Vessel positions and identity fields should remain clearly sourced and timestamped.
+
+## Render deployment
+
+The `npm start` command builds the Vite frontend and then starts the Node server, so the frontend and API are served by the same Render Web Service. Use these Render settings:
+
+- **Build Command:** `npm install`
+- **Start Command:** `npm start`
+- **Environment:** `AEROTRACE_MODE=demo` and optionally `DEMO_AIRCRAFT_COUNT=1000`
+
+Set these under the Render service's **Environment** settings; do not rely on a local `.env` file being present in Render. Save the changes and redeploy. To switch to provider-backed data, change `AEROTRACE_MODE` to `real` and redeploy/restart. Demo mode does not call live aircraft-position or aircraft-detail providers, but it does need access to the historical archive API and basemap network access.
+
+## Optional Google aircraft photo fallback
+
+AeroTrace first checks its existing aircraft photo provider by ICAO24/registration. If no photo is found and Google Programmable Search credentials are configured, the server can search Google Images using the aircraft registration, callsign and aircraft model/type.
+
+Set these environment variables on the server/Render service:
+
+```dotenv
+GOOGLE_SEARCH_API_KEY=your_google_api_key
+GOOGLE_SEARCH_ENGINE_ID=your_programmable_search_engine_id
+```
+
+The Google fallback is optional. Without these variables, the existing photo lookup continues to work normally. Search results link back to the source page returned by Google.

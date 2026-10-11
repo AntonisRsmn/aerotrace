@@ -71,6 +71,8 @@ const AIRPORT_SOURCE = 'aerotrace-airports'
 const AIRPORT_DOTS_LAYER = 'aerotrace-airport-dots'
 const AIRPORT_LABELS_LAYER = 'aerotrace-airport-labels'
 
+const DEMO_HISTORY_SOURCE = 'aerotrace-demo-history-path'
+const DEMO_HISTORY_LAYER = 'aerotrace-demo-history-line'
 const HISTORY_SOURCE = 'aerotrace-history-path'
 const HISTORY_CASING_LAYER = 'aerotrace-history-casing'
 const HISTORY_LAYER = 'aerotrace-history-line'
@@ -95,6 +97,8 @@ const emptyAircraft: FeatureCollection<Point, AircraftProperties> = {
 let airportsDataPromise: Promise<
   FeatureCollection<Point, AirportProperties>
 > | null = null
+
+const airportPositions = new Map<string, Position>()
 
 const emptyAirports: FeatureCollection<Point, AirportProperties> = {
   type: 'FeatureCollection',
@@ -311,6 +315,30 @@ export default function MapView({
     return extrapolateFromLatestObservation()
   }
 
+  function appendAircraftHistory(id: string, position: Position) {
+    const existing = historyRef.current.get(id) ?? []
+    const last = existing[existing.length - 1]
+
+    // Only append a point after the aircraft has actually moved.
+    if (
+      last &&
+      Math.abs(last[0] - position[0]) < 0.000001 &&
+      Math.abs(last[1] - position[1]) < 0.000001
+    ) {
+      return
+    }
+
+    existing.push(position)
+
+    // Keep a bounded in-memory trail so a long demo session cannot grow
+    // memory usage indefinitely.
+    if (existing.length > 240) {
+      existing.splice(0, existing.length - 240)
+    }
+
+    historyRef.current.set(id, existing)
+  }
+
   function addPositionObservation(id: string, position: Position, time: number) {
     const existing = positionBufferRef.current.get(id) ?? []
     const last = existing[existing.length - 1]
@@ -408,6 +436,9 @@ export default function MapView({
     ) {
       lastLiveTrailUpdateRef.current = frameTime
       updateLiveTrail(map)
+      if (aircraftRef.current.some((item) => item.id === selectedIdRef.current && item.isDemo)) {
+        updateHistoryPath(map)
+      }
     }
 
     // Keep animation running while any visible aircraft has a recent airborne
@@ -519,6 +550,7 @@ export default function MapView({
           target,
           Date.now() - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
         )
+        if (item.isDemo) appendAircraftHistory(id, target)
         continue
       }
 
@@ -564,6 +596,7 @@ export default function MapView({
         target,
         Date.now() - Math.max(0, item.lastSeenSeconds ?? 0) * 1000,
       )
+      if (item.isDemo) appendAircraftHistory(id, target)
     }
 
     for (const id of aircraftPositionsRef.current.keys()) {
@@ -603,26 +636,94 @@ export default function MapView({
     }
   }
 
+  function getDemoHistoryPositions(item: Aircraft): Position[] {
+    const route = item.routeCoordinates
+    if (!item.isDemo || !route || route.length < 2) return []
+
+    // Draw only the recorded route already covered by the replay marker.
+    const duration = Math.max(1, item.routeDurationSeconds ?? 1)
+    const progressAt = item.routeProgress ?? 0
+    const updatedAt = item.routeProgressUpdatedAt ?? Math.floor(Date.now() / 1000)
+    const progress = (progressAt + Math.max(0, Date.now() / 1000 - updatedAt) / duration) % 1
+    const lastIndex = Math.min(route.length - 1, Math.floor(progress * (route.length - 1)))
+    let positions = route.slice(0, lastIndex + 1).map(([longitude, latitude]) => [longitude, latitude] as Position)
+
+    // The archived track may begin after takeoff. If we know the recorded
+    // departure airport, prepend its real coordinates so the history line
+    // visibly starts at the airport rather than at the first ADS-B sample.
+    const originCode = item.origin?.trim().toUpperCase()
+    const originPosition = originCode ? airportPositions.get(originCode) : undefined
+    if (originPosition && positions.length) {
+      const firstRecorded = positions[0]
+      if (
+        Math.abs(originPosition[0] - firstRecorded[0]) > 0.00001 ||
+        Math.abs(originPosition[1] - firstRecorded[1]) > 0.00001
+      ) {
+        positions = [originPosition, ...positions]
+      }
+    }
+
+    const currentPosition = aircraftPositionsRef.current.get(item.id) ??
+      ([item.longitude, item.latitude] as Position)
+    const last = positions[positions.length - 1]
+    if (!last ||
+      Math.abs(last[0] - currentPosition[0]) > 0.00001 ||
+      Math.abs(last[1] - currentPosition[1]) > 0.00001) {
+      positions = [...positions, currentPosition]
+    }
+
+    return positions
+  }
+
   function updateHistoryPath(map: maplibregl.Map) {
     if (mapRef.current !== map) return
 
     const source = map.getSource(
       HISTORY_SOURCE,
     ) as maplibregl.GeoJSONSource | undefined
+    const demoSource = map.getSource(
+      DEMO_HISTORY_SOURCE,
+    ) as maplibregl.GeoJSONSource | undefined
 
-    if (!source) return
+    if (!source || !demoSource) return
+
+    if (!showTrailsRef.current) {
+      source.setData(emptyLines)
+      demoSource.setData(emptyLines)
+      return
+    }
+
+    // Every demo aircraft gets a subtle trail from its recorded track data.
+    // The route is progressively revealed up to the replay marker; future
+    // portions are not shown. The selected aircraft keeps its brighter line.
+    demoSource.setData({
+      type: 'FeatureCollection',
+      features: aircraftRef.current
+        .filter((item) => item.isDemo)
+        .map((item) => ({
+          type: 'Feature' as const,
+          properties: { aircraftId: item.id },
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: getDemoHistoryPositions(item),
+          },
+        }))
+        .filter((feature) => feature.geometry.coordinates.length >= 2),
+    })
 
     const selectedAircraft = aircraftRef.current.find(
       (item) => item.id === selectedIdRef.current,
     )
 
-    if (!showTrailsRef.current || !selectedAircraft) {
+    if (!selectedAircraft) {
       source.setData(emptyLines)
       return
     }
 
-    const positions =
-      historyRef.current.get(selectedAircraft.id) ?? []
+    // The selected aircraft receives a brighter, more prominent history line.
+    const positions = selectedAircraft.isDemo
+      ? getDemoHistoryPositions(selectedAircraft)
+      : historyRef.current.get(selectedAircraft.id) ?? []
 
     if (positions.length < 2) {
       source.setData(emptyLines)
@@ -920,6 +1021,14 @@ export default function MapView({
                 icao: values[icaoIndex] || '',
               },
             })
+
+            // Keep a lightweight code -> coordinate index so replay trails can
+            // begin at the recorded departure airport.
+            const airportPosition: Position = [longitude, latitude]
+            const iata = values[iataIndex]?.trim().toUpperCase()
+            const icao = values[icaoIndex]?.trim().toUpperCase()
+            if (iata) airportPositions.set(iata, airportPosition)
+            if (icao) airportPositions.set(icao, airportPosition)
           }
 
           return {
@@ -1016,6 +1125,30 @@ export default function MapView({
           'text-color': '#BDEFFF',
           'text-halo-color': '#08121E',
           'text-halo-width': 1.5,
+        },
+      })
+    }
+
+    if (!map.getSource(DEMO_HISTORY_SOURCE)) {
+      map.addSource(DEMO_HISTORY_SOURCE, {
+        type: 'geojson',
+        data: emptyLines,
+      })
+    }
+
+    if (!map.getLayer(DEMO_HISTORY_LAYER)) {
+      map.addLayer({
+        id: DEMO_HISTORY_LAYER,
+        type: 'line',
+        source: DEMO_HISTORY_SOURCE,
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+        },
+        paint: {
+          'line-color': '#3E91B8',
+          'line-width': 1.5,
+          'line-opacity': 0.55,
         },
       })
     }
@@ -1443,6 +1576,14 @@ export default function MapView({
         updateHistoryPath(map)
       }
 
+      return
+    }
+
+    // Demo positions are synthetic and should never be mixed with real,
+    // server-recorded flight history.
+    if (aircraftRef.current.some((item) => item.id === selectedId && item.isDemo)) {
+      const map = mapRef.current
+      if (map) updateHistoryPath(map)
       return
     }
 

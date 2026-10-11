@@ -1644,3 +1644,34 @@ button:disabled {
 .filter-two-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .filter-range-group { display: flex; flex-direction: column; gap: 6px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+
+/* Clear visual distinction for simulated aircraft in the selection panel. */
+.demo-photo-placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 14px 0;
+  padding: 18px 16px;
+  color: var(--soft);
+  background: linear-gradient(135deg, rgba(88, 169, 255, 0.09), rgba(12, 18, 28, 0.6));
+  border: 1px dashed rgba(88, 169, 255, 0.35);
+  border-radius: 12px;
+}
+
+.demo-photo-placeholder > span {
+  color: var(--blue);
+  font: 9px var(--mono);
+  letter-spacing: 0.12em;
+}
+
+.demo-photo-placeholder strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.demo-photo-placeholder small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}

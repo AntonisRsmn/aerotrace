@@ -98,6 +98,10 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [source, setSource] = useState('OpenSky Network')
+  const [dataMode, setDataMode] = useState<'demo' | 'live' | 'hybrid'>('live')
+  const [totalSimulated, setTotalSimulated] = useState<number | null>(null)
+  const [liveAircraftCount, setLiveAircraftCount] = useState<number | null>(null)
+  const [liveAvailable, setLiveAvailable] = useState<boolean | null>(null)
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const [mobilePanel, setMobilePanel] = useState<'list' | 'details' | null>(
     null,
@@ -169,6 +173,10 @@ export default function App() {
           return result.aircraft
         })
         setSource(result.source)
+        setDataMode(result.mode)
+        setTotalSimulated(result.totalSimulated ?? null)
+        setLiveAircraftCount(result.liveAircraftCount ?? null)
+        setLiveAvailable(result.liveAvailable ?? null)
         setUpdatedAt(result.time)
         setError(null)
       } catch (caught) {
@@ -271,6 +279,23 @@ export default function App() {
       return
     }
 
+    // Demo aircraft already contain generated metadata and routes. Never ask
+    // live metadata providers for details about a simulated aircraft.
+    if (selectedAircraft.isDemo) {
+      setSelectedDetails({
+        registration: selectedAircraft.registration,
+        aircraftType: selectedAircraft.aircraftType,
+        airline: selectedAircraft.airline,
+        origin: selectedAircraft.origin,
+        destination: selectedAircraft.destination,
+        routeAvailable: Boolean(selectedAircraft.origin && selectedAircraft.destination),
+        cached: false,
+      })
+      setDetailsLoading(false)
+      setDetailsError(null)
+      return
+    }
+
     const controller = new AbortController()
     let active = true
 
@@ -347,15 +372,15 @@ export default function App() {
 
         <div className="topbar-status">
           <span className={`status-dot ${error ? 'status-error' : ''}`} />
-          <span>{error ? 'Connection issue' : 'Aircraft feed'}</span>
+          <span>{error ? 'Connection issue' : dataMode === 'demo' ? 'Historical flight replay' : dataMode === 'hybrid' ? 'Live + simulated aircraft feed' : 'Aircraft feed'}</span>
           <span className="status-divider" />
-          <span className="source-label">{source}</span>
+          <span className="source-label">{dataMode === 'demo' ? `DEMO REPLAY · adsb.aero · ${(totalSimulated ?? aircraft.length).toLocaleString()} TRACKS` : dataMode === 'hybrid' ? `${liveAvailable === false ? 'LIVE FEED UNAVAILABLE · ' : ''}${(liveAircraftCount ?? 0).toLocaleString()} LIVE · ${(totalSimulated ?? 0).toLocaleString()} REPLAY` : source}</span>
         </div>
 
         <div className="topbar-actions">
           <span className="live-pill">
             <span className={`status-dot ${error ? 'status-error' : ''}`} />
-            {loading ? 'CONNECTING' : error ? 'DEGRADED' : 'LIVE'}
+            {loading ? 'CONNECTING' : error ? 'DEGRADED' : dataMode === 'demo' ? 'DEMO REPLAY' : dataMode === 'hybrid' ? 'HYBRID DATA' : 'LIVE'}
           </span>
         </div>
       </header>
@@ -690,12 +715,20 @@ export default function App() {
                 </span>
               </div>
 
-              <AircraftPhoto
-                icao24={selectedAircraft.icao24}
-                registration={
-                  selectedDetails?.registration || selectedAircraft.registration
-                }
-              />
+              {selectedAircraft.isDemo ? (
+                <div className="demo-photo-placeholder" role="note">
+                  <span>HISTORICAL REPLAY</span>
+                  <strong>Recorded aircraft</strong>
+                  <small>Identity and route come from an archived ADS-B track. This marker is replayed, not live.</small>
+                </div>
+              ) : (
+                <AircraftPhoto
+                  icao24={selectedAircraft.icao24}
+                  registration={
+                    selectedDetails?.registration || selectedAircraft.registration
+                  }
+                />
+              )}
 
               <section className="detail-section">
                 <div className="section-heading section-heading-plain">
@@ -765,6 +798,18 @@ export default function App() {
                     {selectedAircraft.originCountry || 'Unavailable'}
                   </strong>
                 </div>
+                {selectedAircraft.isDemo && (
+                  <div className="detail-line">
+                    <span>Track source</span>
+                    <strong>{selectedAircraft.replaySource || 'Historical ADS-B archive'}</strong>
+                  </div>
+                )}
+                {selectedAircraft.recordedFlightDate && (
+                  <div className="detail-line">
+                    <span>Recorded flight date</span>
+                    <strong>{new Date(selectedAircraft.recordedFlightDate).toLocaleString()}</strong>
+                  </div>
+                )}
                 <div className="detail-line">
                   <span>Squawk</span>
                   <strong>{selectedAircraft.squawk || 'Unavailable'}</strong>
@@ -824,7 +869,9 @@ export default function App() {
                 </div>
 
                 <p className="data-disclaimer">
-                  {detailsLoading
+                  {selectedAircraft.isDemo
+                    ? `Historical ADS-B route replay${selectedAircraft.recordedFlightDate ? ` recorded ${new Date(selectedAircraft.recordedFlightDate).toLocaleDateString()}` : ''}. Marker position is playback, not live.`
+                    : detailsLoading
                     ? 'Looking up aircraft and route information…'
                     : detailsError
                       ? 'Route lookup is temporarily unavailable.'
@@ -849,10 +896,9 @@ export default function App() {
               </section>
 
               <p className="data-disclaimer">
-                The recorded trail begins when AeroTrace observes the aircraft.
-                The blue line is a heading-based estimate, not a confirmed route.
-                Registration, aircraft type, airline and route details may not
-                be available in every response.
+                {selectedAircraft.isDemo
+                  ? 'The blue line follows an archived ADS-B flight track. Current marker position is replayed for demonstration and does not represent the aircraft’s live location.'
+                  : 'The recorded trail begins when AeroTrace observes the aircraft. The blue line is a heading-based estimate, not a confirmed route. Registration, aircraft type, airline and route details may not be available in every response.'}
               </p>
             </div>
           )}

@@ -1560,7 +1560,7 @@ async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
 
     const suffix = params.size ? `?${params}` : ''
     const upstream = await fetch(
-      `https://api.adsb.lol/v2/0/planespotters_net/hex/${encodeURIComponent(icao24)}${suffix}`,
+      `https://api.adsb.lol/0/planespotters_net/hex/${encodeURIComponent(icao24)}${suffix}`,
       {
         headers: {
           Accept: 'application/json',
@@ -1810,7 +1810,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v2',
+      'photo-v3-live',
       icao24,
       registration,
       callsign,

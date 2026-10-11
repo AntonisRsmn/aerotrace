@@ -1679,9 +1679,11 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
       }
 
       if (!src) {
+        // Find an actual Planespotters photo link and its nearby image.
+        // RegExp() avoids parser ambiguity from the many slash characters.
         const photoBlockPatterns = [
-          /<a[^>]+href=["']([^"']*\\/photo\\/\\d+[^"']*)["'][^>]*>[\\s\\S]{0,5000}?<img[^>]+(?:src|data-src|data-original)=["']([^"']+)["']/gi,
-          /<img[^>]+(?:src|data-src|data-original)=["']([^"']+)["'][^>]*>[\\s\\S]{0,5000}?<a[^>]+href=["']([^"']*\\/photo\\/\\d+[^"']*)["']/gi,
+          new RegExp('<a[^>]+href=["\\\']([^"\\\']*\\\\/photo\\\\/\\\\d+[^"\\\']*)["\\\'][^>]*>[\\\\s\\\\S]{0,5000}?<img[^>]+(?:src|data-src|data-original)=["\\\']([^"\\\']+)["\\\']', 'gi'),
+          new RegExp('<img[^>]+(?:src|data-src|data-original)=["\\\']([^"\\\']+)["\\\'][^>]*>[\\\\s\\\\S]{0,5000}?<a[^>]+href=["\\\']([^"\\\']*\\\\/photo\\\\/\\\\d+[^"\\\']*)["\\\']', 'gi'),
         ]
 
         for (const pattern of photoBlockPatterns) {
@@ -1704,16 +1706,15 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         // Capture any Planespotters CDN image in the page, including lazy-load
         // attributes and responsive srcset values.
         const imageAttributes = [
-          /(?:src|data-src|data-original)=["'](https:\/\\/(?:cdn|images)\\.planespotters\\.net\\/[^"']+)["']/gi,
-          /srcset=["']([^"']+)["']/gi,
+          new RegExp('(?:src|data-src|data-original)=["\\\'](https:\\\\/\\\\/(?:cdn|images)\\\\.planespotters\\\\.net\\\\/[^"\\\']+)["\\\']', 'gi'),
+          new RegExp('srcset=["\\\']([^"\\\']+)["\\\']', 'gi'),
         ]
 
         for (const pattern of imageAttributes) {
           for (const match of html.matchAll(pattern)) {
-            const values =
-              pattern.source.startsWith('srcset')
-                ? match[1].split(',').map((item) => item.trim().split(/\\s+/)[0])
-                : [match[1]]
+            const values = pattern.source.startsWith('srcset')
+              ? match[1].split(',').map((item) => item.trim().split(/\\s+/)[0])
+              : [match[1]]
             const candidate = values.find(isHttpsUrl)
             if (candidate) {
               src = decodeHtmlUrl(candidate)

@@ -118,15 +118,10 @@ The `npm start` command builds the Vite frontend and then starts the Node server
 
 Set these under the Render service's **Environment** settings; do not rely on a local `.env` file being present in Render. Save the changes and redeploy. To switch to provider-backed data, change `AEROTRACE_MODE` to `real` and redeploy/restart. Demo mode does not call live aircraft-position or aircraft-detail providers, but it does need access to the historical archive API and basemap network access.
 
-## Optional Google aircraft photo fallback
+## Aircraft photographs
 
-AeroTrace first checks its existing aircraft photo provider by ICAO24/registration. If no photo is found and Google Programmable Search credentials are configured, the server can search Google Images using the aircraft registration, callsign and aircraft model/type.
+AeroTrace uses a no-key photo lookup pipeline. It first queries Planespotters.net by exact aircraft registration and then ICAO24. If no exact provider photo is available, it searches the documented Wikimedia Commons API using the available registration, callsign, airline/operator, and aircraft model/type metadata.
 
-Set these environment variables on the server/Render service:
+The fallback order degrades deliberately from exact-aircraft identity to representative imagery: registration, registration + model, callsign + model, airline + model, then model. Representative images are labeled as such in the UI and are never presented as a confirmed photograph of the selected airframe. Wikimedia attribution/license metadata is retained when the API supplies it. Successful photo results are cached server-side for 24 hours; misses are cached briefly to avoid hammering providers.
 
-```dotenv
-GOOGLE_SEARCH_API_KEY=your_google_api_key
-GOOGLE_SEARCH_ENGINE_ID=your_programmable_search_engine_id
-```
-
-The Google fallback is optional. Without these variables, the existing photo lookup continues to work normally. Search results link back to the source page returned by Google.
+No Google Programmable Search key or search-engine ID is required.

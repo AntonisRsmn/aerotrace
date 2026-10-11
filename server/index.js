@@ -1431,6 +1431,8 @@ async function proxyAircraftPhotoImage(url, response) {
   const allowedPhotoHost =
     parsed.hostname === 'planespotters.net' ||
     parsed.hostname.endsWith('.planespotters.net') ||
+    parsed.hostname === 'plnspttrs.net' ||
+    parsed.hostname.endsWith('.plnspttrs.net') ||
     parsed.hostname === 'upload.wikimedia.org' ||
     parsed.hostname === 'airport-data.com' ||
     parsed.hostname.endsWith('.airport-data.com')
@@ -1691,7 +1693,7 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
           for (const match of matches) {
             const candidates = match.slice(1).filter(isHttpsUrl)
             const candidate = candidates.find((value) =>
-              decodeHtmlUrl(value).includes('planespotters.net'),
+              /(?:planespotters\.net|plnspttrs\.net)/i.test(decodeHtmlUrl(value)),
             )
             if (candidate) {
               src = decodeHtmlUrl(candidate)
@@ -1706,7 +1708,7 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         // Capture any Planespotters CDN image in the page, including lazy-load
         // attributes and responsive srcset values.
         const imageAttributes = [
-          new RegExp('(?:src|data-src|data-original)=["\\\'](https://(?:cdn|images)\\.planespotters\\.net/[^"\\\']+)["\\\']', 'gi'),
+          new RegExp('(?:src|data-src|data-original)=["\\\'](https://(?:cdn|images)\\.(?:planespotters\\.net|plnspttrs\\.net)/[^"\\\']+)["\\\']', 'gi'),
           new RegExp('srcset=["\\\']([^"\\\']+)["\\\']', 'gi'),
         ]
 
@@ -2087,7 +2089,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v11-planespotters-gallery-fix',
+      'photo-v12-planespotters-cdn-fix',
       icao24,
       registration,
       callsign,

@@ -1428,13 +1428,12 @@ async function proxyAircraftPhotoImage(url, response) {
     return sendJson(response, 400, { error: 'Invalid photo URL.' })
   }
 
-  if (
-    parsed.protocol !== 'https:' ||
-    !(
-      parsed.hostname === 'planespotters.net' ||
-      parsed.hostname.endsWith('.planespotters.net')
-    )
-  ) {
+  const allowedPhotoHost =
+    parsed.hostname === 'planespotters.net' ||
+    parsed.hostname.endsWith('.planespotters.net') ||
+    parsed.hostname === 'upload.wikimedia.org'
+
+  if (parsed.protocol !== 'https:' || !allowedPhotoHost) {
     return sendJson(response, 400, { error: 'Unsupported photo host.' })
   }
 
@@ -1475,19 +1474,29 @@ async function proxyAircraftPhotoImage(url, response) {
   }
 }
 
-async function lookupAircraftPhoto(icao24, registration) {
+async function lookupPlanespottersPhoto(icao24, registration) {
+  // Prefer registration because it is the strongest exact-airframe identifier
+  // for a user-facing photograph. ICAO24 remains an exact-aircraft fallback.
   const endpoints = [
-    `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
     ...(registration
       ? [
-          `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
+          {
+            url: `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
+            match: 'exact',
+            matchedBy: 'registration',
+          },
         ]
       : []),
+    {
+      url: `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
+      match: 'exact',
+      matchedBy: 'icao24',
+    },
   ]
 
   for (const endpoint of endpoints) {
     try {
-      const upstream = await fetch(endpoint, {
+      const upstream = await fetch(endpoint.url, {
         headers: {
           Accept: 'application/json',
           'User-Agent':
@@ -1499,39 +1508,22 @@ async function lookupAircraftPhoto(icao24, registration) {
       if (!upstream.ok) continue
 
       const payload = await upstream.json()
-      const photos = Array.isArray(payload.photos)
-        ? payload.photos
-        : []
+      const photos = Array.isArray(payload.photos) ? payload.photos : []
 
       for (const item of photos) {
         const src =
           item?.thumbnail_large?.src ||
           item?.thumbnail?.src ||
           item?.thumbnail_small?.src ||
-          (typeof item?.thumbnail_large === 'string'
-            ? item.thumbnail_large
-            : null) ||
-          (typeof item?.thumbnail === 'string'
-            ? item.thumbnail
-            : null) ||
+          (typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null) ||
+          (typeof item?.thumbnail === 'string' ? item.thumbnail : null) ||
           item?.src
-
         const link = item?.link || item?.url
 
-        if (
-          typeof src !== 'string' ||
-          typeof link !== 'string'
-        ) {
-          continue
-        }
+        if (typeof src !== 'string' || typeof link !== 'string') continue
 
         try {
-          if (
-            new URL(src).protocol !== 'https:' ||
-            new URL(link).protocol !== 'https:'
-          ) {
-            continue
-          }
+          if (new URL(src).protocol !== 'https:' || new URL(link).protocol !== 'https:') continue
         } catch {
           continue
         }
@@ -1540,21 +1532,156 @@ async function lookupAircraftPhoto(icao24, registration) {
           src,
           link,
           photographer:
-            typeof item.photographer === 'string' &&
-            item.photographer.trim()
+            typeof item.photographer === 'string' && item.photographer.trim()
               ? item.photographer.trim()
               : 'Unknown photographer',
+          source: 'Planespotters.net',
+          match: endpoint.match,
+          matchedBy: endpoint.matchedBy,
+          representative: false,
+          license: null,
+          licenseUrl: null,
         }
       }
     } catch (error) {
       console.warn(
-        '[AeroTrace aircraft photo]',
+        '[AeroTrace Planespotters photo]',
         error instanceof Error ? error.message : error,
       )
     }
   }
 
   return null
+}
+
+function cleanCommonsMetadata(value) {
+  if (typeof value !== 'string') return null
+  return value
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')
+    .trim() || null
+}
+
+async function searchWikimediaCommonsPhoto(queries) {
+  for (const query of queries) {
+    try {
+      const params = new URLSearchParams({
+        action: 'query',
+        format: 'json',
+        formatversion: '2',
+        generator: 'search',
+        gsrnamespace: '6',
+        gsrsearch: query.text,
+        gsrlimit: '8',
+        prop: 'imageinfo',
+        iiprop: 'url|extmetadata',
+        iiurlwidth: '900',
+        origin: '*',
+      })
+
+      const upstream = await fetch(
+        `https://commons.wikimedia.org/w/api.php?${params}`,
+        {
+          headers: {
+            Accept: 'application/json',
+            'User-Agent':
+              'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace; contact: https://rusman.gr)',
+          },
+          signal: AbortSignal.timeout(8000),
+        },
+      )
+
+      if (!upstream.ok) continue
+
+      const payload = await upstream.json()
+      const pages = Array.isArray(payload?.query?.pages) ? payload.query.pages : []
+
+      for (const page of pages) {
+        const info = page?.imageinfo?.[0]
+        const src = info?.thumburl || info?.url
+        const canonicalTitle =
+          typeof page?.title === 'string' ? page.title.replace(/^File:/, '') : ''
+        const link = canonicalTitle
+          ? `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(canonicalTitle.replace(/ /g, '_'))}`
+          : null
+
+        if (typeof src !== 'string' || !link) continue
+
+        const metadata = info?.extmetadata || {}
+        const license = cleanCommonsMetadata(
+          metadata.LicenseShortName?.value || metadata.License?.value,
+        )
+        const licenseUrl =
+          typeof metadata.LicenseUrl?.value === 'string' &&
+          metadata.LicenseUrl.value.startsWith('https://')
+            ? metadata.LicenseUrl.value
+            : null
+        const photographer =
+          cleanCommonsMetadata(metadata.Artist?.value) ||
+          cleanCommonsMetadata(metadata.Credit?.value) ||
+          'Wikimedia Commons contributor'
+
+        return {
+          src,
+          link,
+          photographer,
+          source: 'Wikimedia Commons',
+          match: query.match,
+          matchedBy: query.matchedBy,
+          representative: query.match !== 'exact',
+          license,
+          licenseUrl,
+        }
+      }
+    } catch (error) {
+      console.warn(
+        '[AeroTrace Wikimedia photo]',
+        error instanceof Error ? error.message : error,
+      )
+    }
+  }
+
+  return null
+}
+
+async function lookupAircraftPhoto({
+  icao24,
+  registration,
+  callsign,
+  aircraftType,
+  airline,
+}) {
+  const exact = await lookupPlanespottersPhoto(icao24, registration)
+  if (exact) return exact
+
+  const normalizedModel = (aircraftType || '').replace(/\s*·\s*/g, ' ').trim()
+  const queries = []
+  const addQuery = (text, match, matchedBy) => {
+    const normalized = text.replace(/\s+/g, ' ').trim()
+    if (!normalized || queries.some((item) => item.text === normalized)) return
+    queries.push({ text: normalized, match, matchedBy })
+  }
+
+  // Commons is a free, documented API and does not require an API key.
+  // Search strongest identity metadata first, then deliberately degrade to
+  // representative operator/model and finally model-only photographs.
+  if (registration) addQuery(`"${registration}" aircraft`, 'exact', 'registration')
+  if (registration && normalizedModel) {
+    addQuery(`"${registration}" ${normalizedModel} aircraft`, 'exact', 'registration+model')
+  }
+  if (callsign && normalizedModel) {
+    addQuery(`"${callsign}" ${normalizedModel} aircraft`, 'representative', 'callsign+model')
+  }
+  if (airline && normalizedModel) {
+    addQuery(`"${airline}" ${normalizedModel} aircraft`, 'representative', 'airline+model')
+  }
+  if (normalizedModel) addQuery(`${normalizedModel} aircraft`, 'representative', 'model')
+
+  return searchWikimediaCommonsPhoto(queries)
 }
 
 function sendUnavailableDetails(response, statusCode, message) {
@@ -1599,13 +1726,11 @@ const server = createServer(async (request, response) => {
     request.method === 'GET' &&
     url.pathname === '/api/aircraft-photo'
   ) {
-    const icao24 = (
-      url.searchParams.get('icao24') || ''
-    ).trim().toLowerCase()
-
-    const registration = (
-      url.searchParams.get('registration') || ''
-    ).trim().toUpperCase()
+    const icao24 = (url.searchParams.get('icao24') || '').trim().toLowerCase()
+    const registration = (url.searchParams.get('registration') || '').trim().toUpperCase()
+    const callsign = (url.searchParams.get('callsign') || '').trim().toUpperCase()
+    const aircraftType = (url.searchParams.get('aircraftType') || '').trim()
+    const airline = (url.searchParams.get('airline') || '').trim()
 
     if (!/^[a-f0-9]{6}$/.test(icao24)) {
       return sendJson(response, 400, {
@@ -1624,9 +1749,26 @@ const server = createServer(async (request, response) => {
       })
     }
 
-    const cacheKey = `${icao24}:${registration}`
-    const cached = getCachedPhoto(cacheKey)
+    if (
+      callsign.length > 16 ||
+      aircraftType.length > 100 ||
+      airline.length > 100
+    ) {
+      return sendJson(response, 400, {
+        error: 'Aircraft photo search metadata is too long.',
+        photo: null,
+      })
+    }
 
+    const cacheKey = [
+      icao24,
+      registration,
+      callsign,
+      aircraftType.toLowerCase(),
+      airline.toLowerCase(),
+    ].join(':')
+
+    const cached = getCachedPhoto(cacheKey)
     if (cached !== undefined) {
       return sendJson(response, 200, {
         photo: proxiedAircraftPhoto(cached),
@@ -1634,10 +1776,13 @@ const server = createServer(async (request, response) => {
       })
     }
 
-    const photo = await lookupAircraftPhoto(
+    const photo = await lookupAircraftPhoto({
       icao24,
       registration,
-    )
+      callsign,
+      aircraftType,
+      airline,
+    })
 
     saveCachedPhoto(cacheKey, photo)
 

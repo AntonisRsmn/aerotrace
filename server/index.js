@@ -1642,7 +1642,120 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
 
       const html = await upstream.text()
 
-      // Prefer OpenGraph/Twitter preview images. These are the same canonical
+      // The HEX page can expose a small gallery preview. To get the actual
+      // high-resolution photograph, follow the exact /photo/<id>/... link and
+      // read the image metadata from that photo page.
+      const photoLinks = [
+        ...html.matchAll(/href=["']([^"']*\\/photo\\/\\d+[^"']*)["']/gi),
+      ]
+        .map((match) => match[1])
+        .map((value) => {
+          try {
+            return new URL(
+              value.replace(/&amp;/g, '&'),
+              upstream.url || pageUrl,
+            ).toString()
+          } catch {
+            return null
+          }
+        })
+        .filter((value) => value && value.startsWith('https://'))
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .slice(0, 5)
+
+      const decodeHtmlUrl = (value) =>
+        value
+          .replace(/&amp;/g, '&')
+          .replace(/\\u0026/g, '&')
+          .replace(/\\\//g, '/')
+          .trim()
+
+      const isHttpsUrl = (value) => {
+        if (typeof value !== 'string' || !value.trim()) return false
+        try {
+          return new URL(decodeHtmlUrl(value)).protocol === 'https:'
+        } catch {
+          return false
+        }
+      }
+
+      const extractImageUrl = (photoHtml) => {
+        const metaPatterns = [
+          /<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+          /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["']/i,
+          /<meta[^>]+(?:property|name)=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
+          /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:image["']/i,
+        ]
+
+        for (const pattern of metaPatterns) {
+          const match = photoHtml.match(pattern)
+          if (match?.[1] && isHttpsUrl(match[1])) {
+            return decodeHtmlUrl(match[1])
+          }
+        }
+
+        const imagePatterns = [
+          /(?:src|data-src|data-original)=["'](https?:[^"']+)["']/gi,
+          /"image"\s*:\s*"([^"]+)"/gi,
+        ]
+
+        for (const pattern of imagePatterns) {
+          for (const match of photoHtml.matchAll(pattern)) {
+            const value = match[1]
+            if (isHttpsUrl(value)) return decodeHtmlUrl(value)
+          }
+        }
+
+        return null
+      }
+
+      for (const photoUrl of photoLinks) {
+        try {
+          const photoPage = await fetch(photoUrl, {
+            headers: {
+              Accept: 'text/html,application/xhtml+xml',
+              Referer: upstream.url || pageUrl,
+              'User-Agent':
+                'Mozilla/5.0 (compatible; AeroTrace/1.0; +https://github.com/AntonisRsmn/aerotrace)',
+            },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(10000),
+          })
+
+          if (!photoPage.ok) continue
+
+          const photoHtml = await photoPage.text()
+          const fullResolutionSrc = extractImageUrl(photoHtml)
+
+          if (!fullResolutionSrc) continue
+
+          console.log(
+            '[AeroTrace Planespotters] Full-resolution photo found:',
+            photoUrl,
+          )
+
+          return {
+            src: fullResolutionSrc,
+            link: photoPage.url || photoUrl,
+            photographer: 'Planespotters.net',
+            source: 'Planespotters.net',
+            match: 'exact',
+            matchedBy: registration ? 'registration/photo-page' : 'icao24/photo-page',
+            representative: false,
+            license: null,
+            licenseUrl: null,
+          }
+        } catch (error) {
+          console.warn(
+            '[AeroTrace Planespotters photo page]',
+            error instanceof Error ? error.message : error,
+          )
+        }
+      }
+
+      // If a photo page is unavailable, fall back to metadata on the aircraft
+      // page itself.
+ These are the same canonical
       // image metadata used when the exact Planespotters aircraft page is
       // shared, and avoid scraping the gallery itself.
       const decodeHtmlUrl = (value) =>

@@ -1478,36 +1478,43 @@ function normalizePlanespottersPhoto(payload, matchedBy) {
   const photos = Array.isArray(payload?.photos) ? payload.photos : []
 
   for (const item of photos) {
-    const src =
-      item?.thumbnail_large?.src ||
-      item?.thumbnail?.src ||
-      item?.thumbnail_small?.src ||
-      (typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null) ||
-      (typeof item?.thumbnail === 'string' ? item.thumbnail : null) ||
-      item?.src
-    // Planespotters' public response does not guarantee a page link on every
-    // photo record. The image itself is sufficient; build a stable provider
-    // page link from the aircraft identity when link/url is absent.
+    // Planespotters' documented response uses photos[].thumbnail.src.
+    // Newer responses may also expose thumbnail_large/src or full-size src.
+    const candidates = [
+      item?.thumbnail?.src,
+      item?.thumbnail_large?.src,
+      item?.thumbnail_small?.src,
+      item?.src,
+      typeof item?.thumbnail === 'string' ? item.thumbnail : null,
+      typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null,
+    ]
+
+    const src = candidates.find((value) => {
+      if (typeof value !== 'string' || !value.trim()) return false
+      try {
+        return new URL(value).protocol === 'https:'
+      } catch {
+        return false
+      }
+    })
+
+    if (!src) continue
+
     const rawLink = item?.link || item?.url
-    const fallbackLink = matchedBy === 'registration' && item?.registration
-      ? `https://www.planespotters.net/search?q=${encodeURIComponent(item.registration)}`
-      : null
-    const link = typeof rawLink === 'string' ? rawLink : fallbackLink
-
-    if (typeof src !== 'string') continue
-
-    try {
-      if (new URL(src).protocol !== 'https:') continue
-      if (link && new URL(link).protocol !== 'https:') continue
-    } catch {
-      continue
+    let link = 'https://www.planespotters.net/'
+    if (typeof rawLink === 'string' && rawLink.trim()) {
+      try {
+        if (new URL(rawLink).protocol === 'https:') link = rawLink
+      } catch {
+        // Keep the safe provider homepage.
+      }
     }
 
     return {
       src,
-      link: link || 'https://www.planespotters.net/',
+      link,
       photographer:
-        typeof item.photographer === 'string' && item.photographer.trim()
+        typeof item?.photographer === 'string' && item.photographer.trim()
           ? item.photographer.trim()
           : 'Unknown photographer',
       source: 'Planespotters.net',
@@ -1818,7 +1825,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v4-live',
+      'photo-v5-live',
       icao24,
       registration,
       callsign,

@@ -1484,6 +1484,7 @@ function normalizePlanespottersPhoto(payload, matchedBy) {
     // Newer responses may also expose thumbnail_large/src or full-size src.
     const candidates = [
       item?.thumbnail?.src,
+      item?.thumbnail_large?.src,
       item?.thumbnail_small?.src,
       item?.src,
       item?.image,
@@ -1642,6 +1643,25 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
       // Prefer OpenGraph/Twitter preview images. These are the same canonical
       // image metadata used when the exact Planespotters aircraft page is
       // shared, and avoid scraping the gallery itself.
+      const decodeHtmlUrl = (value) =>
+        value
+          .replace(/&amp;/g, '&')
+          .replace(/\\u0026/g, '&')
+          .replace(/\\\//g, '/')
+          .trim()
+
+      const isHttpsUrl = (value) => {
+        if (typeof value !== 'string' || !value.trim()) return false
+        try {
+          return new URL(decodeHtmlUrl(value)).protocol === 'https:'
+        } catch {
+          return false
+        }
+      }
+
+      // Prefer the page preview image, then inspect the actual photo gallery.
+      // Planespotters serves gallery images from cdn.planespotters.net and
+      // may expose them through src, data-src, data-original, or srcset.
       const patterns = [
         /<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["']/i,
         /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["']/i,
@@ -1652,30 +1672,66 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
       let src = null
       for (const pattern of patterns) {
         const match = html.match(pattern)
-        if (match?.[1]) {
-          src = match[1]
-            .replace(/&amp;/g, '&')
-            .replace(/\\u0026/g, '&')
-            .trim()
+        if (match?.[1] && isHttpsUrl(match[1])) {
+          src = decodeHtmlUrl(match[1])
           break
         }
       }
 
       if (!src) {
-        // Some page versions expose the primary photo in a JSON-LD image
-        // field instead of a meta tag.
+        const photoBlockPatterns = [
+          /<a[^>]+href=["']([^"']*\\/photo\\/\\d+[^"']*)["'][^>]*>[\\s\\S]{0,5000}?<img[^>]+(?:src|data-src|data-original)=["']([^"']+)["']/gi,
+          /<img[^>]+(?:src|data-src|data-original)=["']([^"']+)["'][^>]*>[\\s\\S]{0,5000}?<a[^>]+href=["']([^"']*\\/photo\\/\\d+[^"']*)["']/gi,
+        ]
+
+        for (const pattern of photoBlockPatterns) {
+          const matches = [...html.matchAll(pattern)]
+          for (const match of matches) {
+            const candidates = match.slice(1).filter(isHttpsUrl)
+            const candidate = candidates.find((value) =>
+              decodeHtmlUrl(value).includes('planespotters.net'),
+            )
+            if (candidate) {
+              src = decodeHtmlUrl(candidate)
+              break
+            }
+          }
+          if (src) break
+        }
+      }
+
+      if (!src) {
+        // Capture any Planespotters CDN image in the page, including lazy-load
+        // attributes and responsive srcset values.
+        const imageAttributes = [
+          /(?:src|data-src|data-original)=["'](https:\/\\/(?:cdn|images)\\.planespotters\\.net\\/[^"']+)["']/gi,
+          /srcset=["']([^"']+)["']/gi,
+        ]
+
+        for (const pattern of imageAttributes) {
+          for (const match of html.matchAll(pattern)) {
+            const values =
+              pattern.source.startsWith('srcset')
+                ? match[1].split(',').map((item) => item.trim().split(/\\s+/)[0])
+                : [match[1]]
+            const candidate = values.find(isHttpsUrl)
+            if (candidate) {
+              src = decodeHtmlUrl(candidate)
+              break
+            }
+          }
+          if (src) break
+        }
+      }
+
+      if (!src) {
+        // Some page versions expose the primary photo in JSON-LD.
         const jsonLdImages = [
           ...html.matchAll(/"image"\s*:\s*"([^"]+)"/gi),
         ]
         src = jsonLdImages
-          .map((match) => match[1].replace(/\\u0026/g, '&'))
-          .find((value) => {
-            try {
-              return new URL(value).protocol === 'https:'
-            } catch {
-              return false
-            }
-          }) || null
+          .map((match) => decodeHtmlUrl(match[1]))
+          .find(isHttpsUrl) || null
       }
 
       if (!src) continue
@@ -2030,7 +2086,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v9-planespotters-ua',
+      'photo-v10-planespotters-gallery',
       icao24,
       registration,
       callsign,

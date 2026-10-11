@@ -1606,6 +1606,8 @@ async function lookupAirportDataPhoto(icao24, registration) {
 }
 
 async function lookupPlanespottersPagePhoto(icao24, registration) {
+  // Deterministic final Planespotters lookup: the same HEX URL a user can
+  // enter in Planespotters. The page redirects to the exact airframe record.
   const pages = [
     `https://www.planespotters.net/hex/${encodeURIComponent(icao24.toUpperCase())}`,
     ...(registration
@@ -1619,27 +1621,56 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         headers: {
           Accept: 'text/html,application/xhtml+xml',
           'User-Agent':
-            'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
+            'Mozilla/5.0 (compatible; AeroTrace/1.0; +https://github.com/AntonisRsmn/aerotrace)',
         },
-        signal: AbortSignal.timeout(8000),
+        redirect: 'follow',
+        signal: AbortSignal.timeout(10000),
       })
 
       if (!upstream.ok) continue
 
       const html = await upstream.text()
 
-      // Use the page's Open Graph image only as a last-resort fallback when
-      // the documented JSON API is unavailable. This avoids scraping the
-      // site's photo gallery or guessing CDN paths.
-      const match = html.match(
-        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
-      ) || html.match(
-        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i,
-      )
+      // Prefer OpenGraph/Twitter preview images. These are the same canonical
+      // image metadata used when the exact Planespotters aircraft page is
+      // shared, and avoid scraping the gallery itself.
+      const patterns = [
+        /<meta[^>]+(?:property|name)=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+        /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:image["']/i,
+        /<meta[^>]+(?:property|name)=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
+        /<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']twitter:image["']/i,
+      ]
 
-      if (!match?.[1]) continue
+      let src = null
+      for (const pattern of patterns) {
+        const match = html.match(pattern)
+        if (match?.[1]) {
+          src = match[1]
+            .replace(/&amp;/g, '&')
+            .replace(/\\u0026/g, '&')
+            .trim()
+          break
+        }
+      }
 
-      const src = match[1].replace(/&amp;/g, '&').trim()
+      if (!src) {
+        // Some page versions expose the primary photo in a JSON-LD image
+        // field instead of a meta tag.
+        const jsonLdImages = [
+          ...html.matchAll(/"image"\s*:\s*"([^"]+)"/gi),
+        ]
+        src = jsonLdImages
+          .map((match) => match[1].replace(/\\u0026/g, '&'))
+          .find((value) => {
+            try {
+              return new URL(value).protocol === 'https:'
+            } catch {
+              return false
+            }
+          }) || null
+      }
+
+      if (!src) continue
 
       try {
         if (new URL(src).protocol !== 'https:') continue
@@ -1649,7 +1680,7 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
 
       return {
         src,
-        link: pageUrl,
+        link: upstream.url || pageUrl,
         photographer: 'Planespotters.net',
         source: 'Planespotters.net',
         match: 'exact',
@@ -1973,7 +2004,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v7-live',
+      'photo-v8-live',
       icao24,
       registration,
       callsign,

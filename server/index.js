@@ -1861,12 +1861,6 @@ async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
   const airportDataPhoto = await lookupAirportDataPhoto(icao24, registration)
   if (airportDataPhoto) return airportDataPhoto
 
-  const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
-  if (pagePhoto) {
-    console.log('[AeroTrace Planespotters] Page lookup succeeded:', pagePhoto.src)
-    return pagePhoto
-  }
-
   console.warn(
     '[AeroTrace Planespotters] All exact photo lookups returned no photo:',
     { icao24, registration, aircraftType },
@@ -1975,6 +1969,11 @@ async function lookupAircraftPhoto({
   aircraftType,
   airline,
 }) {
+  // Prefer the full-resolution Planespotters page image before the API
+  // thumbnail. Planespotters' API thumbnails are intentionally small previews.
+  const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
+  if (pagePhoto) return pagePhoto
+
   const exact = await lookupPlanespottersPhoto(icao24, registration, aircraftType)
   if (exact) return exact
 
@@ -2096,7 +2095,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v13-planespotters-direct-page',
+      'photo-v14-planespotters-full-resolution',
       icao24,
       registration,
       callsign,

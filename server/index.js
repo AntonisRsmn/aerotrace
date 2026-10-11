@@ -1682,8 +1682,8 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         // Find an actual Planespotters photo link and its nearby image.
         // RegExp() avoids parser ambiguity from the many slash characters.
         const photoBlockPatterns = [
-          new RegExp('<a[^>]+href=["\\\']([^"\\\']*\\\\/photo\\\\/\\\\d+[^"\\\']*)["\\\'][^>]*>[\\\\s\\\\S]{0,5000}?<img[^>]+(?:src|data-src|data-original)=["\\\']([^"\\\']+)["\\\']', 'gi'),
-          new RegExp('<img[^>]+(?:src|data-src|data-original)=["\\\']([^"\\\']+)["\\\'][^>]*>[\\\\s\\\\S]{0,5000}?<a[^>]+href=["\\\']([^"\\\']*\\\\/photo\\\\/\\\\d+[^"\\\']*)["\\\']', 'gi'),
+          new RegExp('<a[^>]+href=["\\\']([^"\\\']*/photo/\\d+[^"\\\']*)["\\\'][^>]*>[\\s\\S]{0,5000}?<img[^>]+(?:src|data-src|data-original)=["\\\']([^"\\\']+)["\\\']', 'gi'),
+          new RegExp('<img[^>]+(?:src|data-src|data-original)=["\\\']([^"\\\']+)["\\\'][^>]*>[\\s\\S]{0,5000}?<a[^>]+href=["\\\']([^"\\\']*/photo/\\d+[^"\\\']*)["\\\']', 'gi'),
         ]
 
         for (const pattern of photoBlockPatterns) {
@@ -1706,7 +1706,7 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
         // Capture any Planespotters CDN image in the page, including lazy-load
         // attributes and responsive srcset values.
         const imageAttributes = [
-          new RegExp('(?:src|data-src|data-original)=["\\\'](https:\\\\/\\\\/(?:cdn|images)\\\\.planespotters\\\\.net\\\\/[^"\\\']+)["\\\']', 'gi'),
+          new RegExp('(?:src|data-src|data-original)=["\\\'](https://(?:cdn|images)\\.planespotters\\.net/[^"\\\']+)["\\\']', 'gi'),
           new RegExp('srcset=["\\\']([^"\\\']+)["\\\']', 'gi'),
         ]
 
@@ -2087,7 +2087,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v10-planespotters-gallery',
+      'photo-v11-planespotters-gallery-fix',
       icao24,
       registration,
       callsign,

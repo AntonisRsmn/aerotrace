@@ -2062,13 +2062,18 @@ async function lookupAircraftPhoto({
   aircraftType,
   airline,
 }) {
-  // Prefer the full-resolution Planespotters page image before the API
-  // thumbnail. Planespotters' API thumbnails are intentionally small previews.
-  const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
-  if (pagePhoto) return pagePhoto
-
+  // Planespotters blocks server-side aircraft-page requests with 403.
+  // Use the public API (or its ADSB.lol-compatible cache) first. The API's
+  // thumbnail_large field is the highest-resolution image exposed without
+  // scraping a protected page.
   const exact = await lookupPlanespottersPhoto(icao24, registration, aircraftType)
   if (exact) return exact
+
+  // Only try the aircraft page as a final fallback. It is frequently blocked
+  // by Planespotters' anti-bot protection, so it must never delay normal photo
+  // resolution.
+  const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
+  if (pagePhoto) return pagePhoto
 
   const normalizedModel = (aircraftType || '').replace(/\s*·\s*/g, ' ').trim()
   const queries = []

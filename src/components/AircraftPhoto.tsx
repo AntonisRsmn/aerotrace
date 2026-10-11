@@ -1,10 +1,15 @@
-
 import { useEffect, useState } from 'react'
 
 type AircraftPhotoData = {
   src: string
   link: string
   photographer: string
+  source?: string
+  match?: 'exact' | 'representative'
+  matchedBy?: string
+  representative?: boolean
+  license?: string | null
+  licenseUrl?: string | null
 }
 
 type AircraftPhotoResponse = {
@@ -16,11 +21,17 @@ type AircraftPhotoResponse = {
 type AircraftPhotoProps = {
   icao24: string
   registration?: string | null
+  callsign?: string | null
+  aircraftType?: string | null
+  airline?: string | null
 }
 
 export default function AircraftPhoto({
   icao24,
   registration,
+  callsign,
+  aircraftType,
+  airline,
 }: AircraftPhotoProps) {
   const [photo, setPhoto] = useState<AircraftPhotoData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -42,9 +53,10 @@ export default function AircraftPhoto({
           icao24: icao24.trim().toLowerCase(),
         })
 
-        if (registration?.trim()) {
-          params.set('registration', registration.trim())
-        }
+        if (registration?.trim()) params.set('registration', registration.trim())
+        if (callsign?.trim()) params.set('callsign', callsign.trim())
+        if (aircraftType?.trim()) params.set('aircraftType', aircraftType.trim())
+        if (airline?.trim()) params.set('airline', airline.trim())
 
         const response = await fetch(
           `/api/aircraft-photo?${params.toString()}`,
@@ -54,31 +66,20 @@ export default function AircraftPhoto({
           },
         )
 
-        const payload =
-          (await response.json()) as AircraftPhotoResponse
+        const payload = (await response.json()) as AircraftPhotoResponse
 
         if (!response.ok) {
-          throw new Error(
-            payload.error || 'Aircraft photo lookup failed.',
-          )
+          throw new Error(payload.error || 'Aircraft photo lookup failed.')
         }
 
-        if (active) {
-          setPhoto(payload.photo ?? null)
-        }
+        if (active) setPhoto(payload.photo ?? null)
       } catch (error) {
-        if (
-          !active ||
-          (error instanceof Error && error.name === 'AbortError')
-        ) {
-          return
-        }
+        if (!active || (error instanceof Error && error.name === 'AbortError')) return
 
         console.warn(
           '[AeroTrace aircraft photo]',
           error instanceof Error ? error.message : error,
         )
-
         setLookupFailed(true)
       } finally {
         if (active) setLoading(false)
@@ -96,7 +97,7 @@ export default function AircraftPhoto({
       active = false
       controller.abort()
     }
-  }, [icao24, registration])
+  }, [icao24, registration, callsign, aircraftType, airline])
 
   const cardStyle: React.CSSProperties = {
     margin: '0 14px 16px',
@@ -117,6 +118,8 @@ export default function AircraftPhoto({
     color: '#8192a8',
     textAlign: 'center',
   }
+
+  const isRepresentative = Boolean(photo?.representative || photo?.match === 'representative')
 
   return (
     <section style={cardStyle} aria-label="Aircraft photograph">
@@ -140,11 +143,13 @@ export default function AircraftPhoto({
           AIRCRAFT PHOTOGRAPH
         </span>
 
-        <span style={{ color: '#72869d', fontSize: 9 }}>
+        <span style={{ color: isRepresentative ? '#d6aa68' : '#72869d', fontSize: 9 }}>
           {loading
             ? 'Searching…'
             : photo && !imageFailed
-              ? 'Photo available'
+              ? isRepresentative
+                ? 'Representative photo'
+                : 'Exact aircraft'
               : 'No photo'}
         </span>
       </div>
@@ -161,9 +166,7 @@ export default function AircraftPhoto({
               animation: 'spin 0.9s linear infinite',
             }}
           />
-          <span style={{ fontSize: 10 }}>
-            Looking for this aircraft…
-          </span>
+          <span style={{ fontSize: 10 }}>Looking for this aircraft…</span>
         </div>
       ) : photo && !imageFailed ? (
         <>
@@ -171,12 +174,16 @@ export default function AircraftPhoto({
             href={photo.link}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label="Open original aircraft photograph on Planespotters"
+            aria-label={`Open original aircraft photograph on ${photo.source || 'photo provider'}`}
             style={{ display: 'block', background: '#080d14' }}
           >
             <img
               src={photo.src}
-              alt={`Aircraft ${registration || icao24.toUpperCase()}`}
+              alt={
+                isRepresentative
+                  ? `Representative photograph for ${airline || aircraftType || 'this aircraft type'}`
+                  : `Aircraft ${registration || icao24.toUpperCase()}`
+              }
               loading="lazy"
               onError={() => setImageFailed(true)}
               style={{
@@ -198,18 +205,26 @@ export default function AircraftPhoto({
               padding: '9px 11px',
             }}
           >
-            <span
-              style={{
-                minWidth: 0,
-                overflow: 'hidden',
-                color: '#8294aa',
-                fontSize: 9,
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Photo: {photo.photographer || 'Unknown photographer'}
-            </span>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  overflow: 'hidden',
+                  color: '#8294aa',
+                  fontSize: 9,
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Photo: {photo.photographer || 'Unknown photographer'}
+              </div>
+              <div style={{ marginTop: 3, color: '#667b92', fontSize: 8 }}>
+                {isRepresentative
+                  ? `Representative match · ${photo.matchedBy || 'aircraft metadata'}`
+                  : `Exact-aircraft match · ${photo.matchedBy || 'aircraft identity'}`}
+                {photo.source ? ` · ${photo.source}` : ''}
+                {photo.license ? ` · ${photo.license}` : ''}
+              </div>
+            </div>
 
             <a
               href={photo.link}
@@ -245,13 +260,7 @@ export default function AircraftPhoto({
             ✈
           </span>
 
-          <strong
-            style={{
-              color: '#b8c7d9',
-              fontSize: 11,
-              fontWeight: 500,
-            }}
-          >
+          <strong style={{ color: '#b8c7d9', fontSize: 11, fontWeight: 500 }}>
             {imageFailed
               ? 'Photo could not be displayed'
               : lookupFailed
@@ -271,7 +280,7 @@ export default function AircraftPhoto({
               ? 'The photo provider returned an image that could not be loaded.'
               : lookupFailed
                 ? 'Aircraft data is still available. Try selecting this aircraft again later.'
-                : 'No matching photograph was found for this aircraft.'}
+                : 'No suitable exact or representative photograph was found.'}
           </span>
         </div>
       )}

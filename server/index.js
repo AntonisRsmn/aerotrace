@@ -1646,7 +1646,7 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
       // high-resolution photograph, follow the exact /photo/<id>/... link and
       // read the image metadata from that photo page.
       const photoLinks = [
-        ...html.matchAll(/href=["']([^"']*\\/photo\\/\\d+[^"']*)["']/gi),
+        ...html.matchAll(/href=["']([^"']*\/photo\/\d+[^"']*)["']/gi),
       ]
         .map((match) => match[1])
         .map((value) => {

@@ -715,20 +715,19 @@ export default function App() {
                 </span>
               </div>
 
-              {selectedAircraft.isDemo ? (
-                <div className="demo-photo-placeholder" role="note">
-                  <span>HISTORICAL REPLAY</span>
-                  <strong>Recorded aircraft</strong>
-                  <small>Identity and route come from an archived ADS-B track. This marker is replayed, not live.</small>
-                </div>
-              ) : (
-                <AircraftPhoto
-                  icao24={selectedAircraft.icao24}
-                  registration={
-                    selectedDetails?.registration || selectedAircraft.registration
-                  }
-                />
-              )}
+              <AircraftPhoto
+                icao24={selectedAircraft.icao24}
+                registration={
+                  selectedDetails?.registration || selectedAircraft.registration
+                }
+                callsign={selectedAircraft.callsign}
+                aircraftType={
+                  selectedDetails?.aircraftType || selectedAircraft.aircraftType
+                }
+                airline={
+                  selectedDetails?.airline || selectedAircraft.airline
+                }
+              />
 
               <section className="detail-section">
                 <div className="section-heading section-heading-plain">

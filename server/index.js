@@ -1474,27 +1474,61 @@ async function proxyAircraftPhotoImage(url, response) {
   }
 }
 
-async function lookupPlanespottersPhoto(icao24, registration) {
-  // Prefer registration because it is the strongest exact-airframe identifier
-  // for a user-facing photograph. ICAO24 remains an exact-aircraft fallback.
-  const endpoints = [
+function normalizePlanespottersPhoto(payload, matchedBy) {
+  const photos = Array.isArray(payload?.photos) ? payload.photos : []
+
+  for (const item of photos) {
+    const src =
+      item?.thumbnail_large?.src ||
+      item?.thumbnail?.src ||
+      item?.thumbnail_small?.src ||
+      (typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null) ||
+      (typeof item?.thumbnail === 'string' ? item.thumbnail : null) ||
+      item?.src
+    const link = item?.link || item?.url
+
+    if (typeof src !== 'string' || typeof link !== 'string') continue
+
+    try {
+      if (new URL(src).protocol !== 'https:' || new URL(link).protocol !== 'https:') continue
+    } catch {
+      continue
+    }
+
+    return {
+      src,
+      link,
+      photographer:
+        typeof item.photographer === 'string' && item.photographer.trim()
+          ? item.photographer.trim()
+          : 'Unknown photographer',
+      source: 'Planespotters.net',
+      match: 'exact',
+      matchedBy,
+      representative: false,
+      license: null,
+      licenseUrl: null,
+    }
+  }
+
+  return null
+}
+
+async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
+  const directEndpoints = [
     ...(registration
-      ? [
-          {
-            url: `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
-            match: 'exact',
-            matchedBy: 'registration',
-          },
-        ]
+      ? [{
+          url: `https://api.planespotters.net/pub/photos/reg/${encodeURIComponent(registration)}`,
+          matchedBy: 'registration',
+        }]
       : []),
     {
       url: `https://api.planespotters.net/pub/photos/hex/${encodeURIComponent(icao24)}`,
-      match: 'exact',
       matchedBy: 'icao24',
     },
   ]
 
-  for (const endpoint of endpoints) {
+  for (const endpoint of directEndpoints) {
     try {
       const upstream = await fetch(endpoint.url, {
         headers: {
@@ -1506,49 +1540,49 @@ async function lookupPlanespottersPhoto(icao24, registration) {
       })
 
       if (!upstream.ok) continue
-
-      const payload = await upstream.json()
-      const photos = Array.isArray(payload.photos) ? payload.photos : []
-
-      for (const item of photos) {
-        const src =
-          item?.thumbnail_large?.src ||
-          item?.thumbnail?.src ||
-          item?.thumbnail_small?.src ||
-          (typeof item?.thumbnail_large === 'string' ? item.thumbnail_large : null) ||
-          (typeof item?.thumbnail === 'string' ? item.thumbnail : null) ||
-          item?.src
-        const link = item?.link || item?.url
-
-        if (typeof src !== 'string' || typeof link !== 'string') continue
-
-        try {
-          if (new URL(src).protocol !== 'https:' || new URL(link).protocol !== 'https:') continue
-        } catch {
-          continue
-        }
-
-        return {
-          src,
-          link,
-          photographer:
-            typeof item.photographer === 'string' && item.photographer.trim()
-              ? item.photographer.trim()
-              : 'Unknown photographer',
-          source: 'Planespotters.net',
-          match: endpoint.match,
-          matchedBy: endpoint.matchedBy,
-          representative: false,
-          license: null,
-          licenseUrl: null,
-        }
-      }
+      const photo = normalizePlanespottersPhoto(await upstream.json(), endpoint.matchedBy)
+      if (photo) return photo
     } catch (error) {
       console.warn(
         '[AeroTrace Planespotters photo]',
         error instanceof Error ? error.message : error,
       )
     }
+  }
+
+  // adsb.lol exposes a documented-compatible cached proxy for the
+  // Planespotters hex endpoint. This gives AeroTrace a no-key second path
+  // when direct Planespotters access is rate-limited or blocked upstream.
+  try {
+    const params = new URLSearchParams()
+    if (registration) params.set('reg', registration)
+    if (aircraftType) params.set('icaoType', aircraftType)
+
+    const suffix = params.size ? `?${params}` : ''
+    const upstream = await fetch(
+      `https://api.adsb.lol/v2/0/planespotters_net/hex/${encodeURIComponent(icao24)}${suffix}`,
+      {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent':
+            'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace; contact: https://rusman.gr)',
+        },
+        signal: AbortSignal.timeout(8000),
+      },
+    )
+
+    if (upstream.ok) {
+      const photo = normalizePlanespottersPhoto(
+        await upstream.json(),
+        registration ? 'registration/icao24' : 'icao24',
+      )
+      if (photo) return photo
+    }
+  } catch (error) {
+    console.warn(
+      '[AeroTrace adsb.lol photo proxy]',
+      error instanceof Error ? error.message : error,
+    )
   }
 
   return null
@@ -1655,7 +1689,7 @@ async function lookupAircraftPhoto({
   aircraftType,
   airline,
 }) {
-  const exact = await lookupPlanespottersPhoto(icao24, registration)
+  const exact = await lookupPlanespottersPhoto(icao24, registration, aircraftType)
   if (exact) return exact
 
   const normalizedModel = (aircraftType || '').replace(/\s*·\s*/g, ' ').trim()
@@ -1669,17 +1703,30 @@ async function lookupAircraftPhoto({
   // Commons is a free, documented API and does not require an API key.
   // Search strongest identity metadata first, then deliberately degrade to
   // representative operator/model and finally model-only photographs.
-  if (registration) addQuery(`"${registration}" aircraft`, 'exact', 'registration')
+  // Commons file names frequently contain the registration without the word
+  // "aircraft", so do not over-constrain exact-registration searches.
+  if (registration) {
+    addQuery(`intitle:${registration}`, 'exact', 'registration')
+    addQuery(registration, 'exact', 'registration')
+  }
   if (registration && normalizedModel) {
-    addQuery(`"${registration}" ${normalizedModel} aircraft`, 'exact', 'registration+model')
+    addQuery(`${registration} ${normalizedModel}`, 'exact', 'registration+model')
   }
   if (callsign && normalizedModel) {
-    addQuery(`"${callsign}" ${normalizedModel} aircraft`, 'representative', 'callsign+model')
+    addQuery(`${callsign} ${normalizedModel}`, 'representative', 'callsign+model')
   }
   if (airline && normalizedModel) {
-    addQuery(`"${airline}" ${normalizedModel} aircraft`, 'representative', 'airline+model')
+    addQuery(`${airline} ${normalizedModel}`, 'representative', 'airline+model')
   }
-  if (normalizedModel) addQuery(`${normalizedModel} aircraft`, 'representative', 'model')
+  if (normalizedModel) {
+    addQuery(normalizedModel, 'representative', 'model')
+    // Historical archives sometimes provide a verbose model string. The
+    // leading ICAO/type token is useful as a broader last-resort search.
+    const modelTokens = normalizedModel.split(/\s+/).filter(Boolean)
+    if (modelTokens.length > 1) {
+      addQuery(modelTokens.slice(0, 2).join(' '), 'representative', 'model')
+    }
+  }
 
   return searchWikimediaCommonsPhoto(queries)
 }

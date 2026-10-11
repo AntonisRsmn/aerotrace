@@ -1862,8 +1862,15 @@ async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
   if (airportDataPhoto) return airportDataPhoto
 
   const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
-  if (pagePhoto) return pagePhoto
+  if (pagePhoto) {
+    console.log('[AeroTrace Planespotters] Page lookup succeeded:', pagePhoto.src)
+    return pagePhoto
+  }
 
+  console.warn(
+    '[AeroTrace Planespotters] All exact photo lookups returned no photo:',
+    { icao24, registration, aircraftType },
+  )
   return null
 }
 
@@ -2089,7 +2096,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v12-planespotters-cdn-fix',
+      'photo-v13-planespotters-direct-page',
       icao24,
       registration,
       callsign,
@@ -2099,6 +2106,8 @@ const server = createServer(async (request, response) => {
 
     const cached = getCachedPhoto(cacheKey)
     if (cached !== undefined) {
+      console.log('[AeroTrace photo] Cache hit:', cacheKey, cached ? cached.source : 'null')
+
       return sendJson(response, 200, {
         photo: proxiedAircraftPhoto(cached),
         cached: true,

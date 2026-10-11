@@ -1754,10 +1754,8 @@ async function lookupPlanespottersPagePhoto(icao24, registration) {
       }
 
       // If a photo page is unavailable, fall back to metadata on the aircraft
-      // page itself.
- These are the same canonical
-      // image metadata used when the exact Planespotters aircraft page is
-      // shared, and avoid scraping the gallery itself.
+      // page itself. These are the same canonical image metadata used when
+      // the exact Planespotters aircraft page is shared.
       const decodeHtmlUrl = (value) =>
         value
           .replace(/&amp;/g, '&')

@@ -1807,7 +1807,10 @@ const server = createServer(async (request, response) => {
       })
     }
 
+    // Bump the cache namespace when lookup strategy changes so an old
+    // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
+      'photo-v2',
       icao24,
       registration,
       callsign,

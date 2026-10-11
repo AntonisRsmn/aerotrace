@@ -1529,6 +1529,71 @@ function normalizePlanespottersPhoto(payload, matchedBy) {
   return null
 }
 
+
+async function lookupPlanespottersPagePhoto(icao24, registration) {
+  const pages = [
+    `https://www.planespotters.net/hex/${encodeURIComponent(icao24.toUpperCase())}`,
+    ...(registration
+      ? [`https://www.planespotters.net/search?q=${encodeURIComponent(registration)}`]
+      : []),
+  ]
+
+  for (const pageUrl of pages) {
+    try {
+      const upstream = await fetch(pageUrl, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml',
+          'User-Agent':
+            'AeroTrace/1.0 (+https://github.com/AntonisRsmn/aerotrace)',
+        },
+        signal: AbortSignal.timeout(8000),
+      })
+
+      if (!upstream.ok) continue
+
+      const html = await upstream.text()
+
+      // Use the page's Open Graph image only as a last-resort fallback when
+      // the documented JSON API is unavailable. This avoids scraping the
+      // site's photo gallery or guessing CDN paths.
+      const match = html.match(
+        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["'][^>]*>/i,
+      ) || html.match(
+        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["'][^>]*>/i,
+      )
+
+      if (!match?.[1]) continue
+
+      const src = match[1].replace(/&amp;/g, '&').trim()
+
+      try {
+        if (new URL(src).protocol !== 'https:') continue
+      } catch {
+        continue
+      }
+
+      return {
+        src,
+        link: pageUrl,
+        photographer: 'Planespotters.net',
+        source: 'Planespotters.net',
+        match: 'exact',
+        matchedBy: registration ? 'registration/page' : 'icao24/page',
+        representative: false,
+        license: null,
+        licenseUrl: null,
+      }
+    } catch (error) {
+      console.warn(
+        '[AeroTrace Planespotters page photo]',
+        error instanceof Error ? error.message : error,
+      )
+    }
+  }
+
+  return null
+}
+
 async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
   const directEndpoints = [
     ...(registration
@@ -1599,6 +1664,9 @@ async function lookupPlanespottersPhoto(icao24, registration, aircraftType) {
       error instanceof Error ? error.message : error,
     )
   }
+
+  const pagePhoto = await lookupPlanespottersPagePhoto(icao24, registration)
+  if (pagePhoto) return pagePhoto
 
   return null
 }
@@ -1825,7 +1893,7 @@ const server = createServer(async (request, response) => {
     // Bump the cache namespace when lookup strategy changes so an old
     // five-minute cached miss cannot hide newly available fallback results.
     const cacheKey = [
-      'photo-v5-live',
+      'photo-v6-live',
       icao24,
       registration,
       callsign,

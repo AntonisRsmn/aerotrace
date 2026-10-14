@@ -2332,11 +2332,43 @@ const server = createServer(async (request, response) => {
       : allRecordedPoints.filter(
           (point) => point.flightSequence === activeFlightSequence,
         )
-    const providerPoints = []
+    // If the aircraft was already airborne when AeroTrace first saw it,
+    // bootstrap the beginning of the current journey from OpenSky's active
+    // trajectory. Trim ground/taxi samples and never include provider points
+    // newer than AeroTrace's own current-flight observations.
+    const providerTrack = activeFlightSequence == null
+      ? []
+      : await fetchOpenSkyTrackPoints(icao24)
 
-    // Only expose the current AeroTrace-recorded flight. Ground movement and
-    // previous flights must never be connected into the selected live trail.
-    const combined = [...recordedPoints]
+    let providerPoints = providerTrack
+    if (providerPoints.length) {
+      const firstAirborneIndex = providerPoints.findIndex(
+        (point) =>
+          point.onGround === false ||
+          (Number.isFinite(point.altitudeFt) &&
+            point.altitudeFt >= AIRBORNE_TRACK_ALTITUDE_FT),
+      )
+
+      if (firstAirborneIndex >= 0) {
+        // Keep one point immediately before airborne state when available so
+        // the line begins near the runway/takeoff roll rather than in mid-air.
+        providerPoints = providerPoints.slice(Math.max(0, firstAirborneIndex - 1))
+      } else {
+        providerPoints = []
+      }
+
+      const firstRecordedTime = recordedPoints[0]?.time
+      if (Number.isFinite(firstRecordedTime)) {
+        providerPoints = providerPoints.filter(
+          (point) => point.time <= firstRecordedTime,
+        )
+      }
+    }
+
+    // Merge OpenSky's already-flown portion with AeroTrace's live observations
+    // for the active flight only. A new flightSequence after the next takeoff
+    // prevents separate journeys from ever being connected.
+    const combined = [...providerPoints, ...recordedPoints]
       .filter(
         (point) =>
           Number.isFinite(point.time) &&

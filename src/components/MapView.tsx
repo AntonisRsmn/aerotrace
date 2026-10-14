@@ -1337,14 +1337,14 @@ export default function MapView({
 
       if (context) {
         context.translate(size / 2, size / 2)
-        context.rotate(Math.PI / 2)
         context.beginPath()
-        context.moveTo(-12, -7)
-        context.lineTo(8, -7)
-        context.lineTo(13, 0)
-        context.lineTo(8, 7)
-        context.lineTo(-12, 7)
-        context.lineTo(-7, 0)
+        context.moveTo(0, -13)
+        context.lineTo(7, 7)
+        context.lineTo(3, 6)
+        context.lineTo(3, 11)
+        context.lineTo(-3, 11)
+        context.lineTo(-3, 6)
+        context.lineTo(-7, 7)
         context.closePath()
         context.fillStyle = '#63F3C4'
         context.fill()
@@ -1352,7 +1352,7 @@ export default function MapView({
         context.lineWidth = 2
         context.stroke()
         context.fillStyle = '#07111F'
-        context.fillRect(-5, -4, 9, 8)
+        context.fillRect(-2, -2, 4, 8)
       }
 
       map.addImage('aerotrace-vessel', {

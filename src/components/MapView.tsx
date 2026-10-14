@@ -503,7 +503,7 @@ export default function MapView({
     const source = map.getSource('aerotrace-vessel-trails') as maplibregl.GeoJSONSource | undefined
     if (!source) return
 
-    const selected = vesselsRef.current.find((vessel) => vessel.id === selectedIdRef.current)
+    const selected = vesselsRef.current.find((vessel) => vessel.id === selectedVesselIdRef.current)
     const positions = selected ? vesselTrackRef.current.get(selected.mmsi) ?? [] : []
 
     source.setData({
@@ -544,7 +544,7 @@ export default function MapView({
           mmsi: vessel.mmsi,
           name: vessel.name?.trim() || vessel.mmsi,
           heading: vessel.heading ?? vessel.course ?? 0,
-          selected: vessel.id === selectedIdRef.current,
+          selected: vessel.id === selectedVesselIdRef.current,
         },
         geometry: {
           type: 'Point',
@@ -1932,13 +1932,13 @@ export default function MapView({
   }, [selectedId])
 
   useEffect(() => {
-    if (!selectedIdRef.current || !selectedIdRef.current.startsWith('vessel:')) {
+    if (!selectedVesselIdRef.current) {
       const map = mapRef.current
       if (map) updateVesselTrail(map)
       return
     }
 
-    const selected = vesselsRef.current.find((item) => item.id === selectedIdRef.current)
+    const selected = vesselsRef.current.find((item) => item.id === selectedVesselIdRef.current)
     if (!selected) return
 
     let cancelled = false
@@ -1968,7 +1968,7 @@ export default function MapView({
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [selectedId])
+  }, [selectedVesselId])
 
   return (
     <div

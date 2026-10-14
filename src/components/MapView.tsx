@@ -96,6 +96,7 @@ const emptyLines: FeatureCollection<LineString> = {
 
 type VesselProperties = {
   id: string
+  mmsi: string
   name: string
   heading: number
   selected: boolean
@@ -491,6 +492,26 @@ export default function MapView({
     }
   }
 
+  function updateVesselTrail(map: maplibregl.Map) {
+    const source = map.getSource('aerotrace-vessel-trails') as maplibregl.GeoJSONSource | undefined
+    if (!source) return
+
+    const selected = vesselsRef.current.find((vessel) => vessel.id === selectedIdRef.current)
+    const positions = selected ? vesselTrackRef.current.get(selected.mmsi) ?? [] : []
+
+    source.setData({
+      type: 'FeatureCollection',
+      features:
+        positions.length >= 2
+          ? [{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: positions },
+            }]
+          : [],
+    })
+  }
+
   function updateVesselSource(map: maplibregl.Map) {
     if (mapRef.current !== map) return
     const source = map.getSource(VESSEL_SOURCE) as maplibregl.GeoJSONSource | undefined
@@ -513,6 +534,7 @@ export default function MapView({
         id: vessel.id,
         properties: {
           id: vessel.id,
+          mmsi: vessel.mmsi,
           name: vessel.name?.trim() || vessel.mmsi,
           heading: vessel.heading ?? vessel.course ?? 0,
           selected: vessel.id === selectedIdRef.current,
@@ -1282,6 +1304,26 @@ export default function MapView({
       })
     }
 
+    if (!map.getSource('aerotrace-vessel-trails')) {
+      map.addSource('aerotrace-vessel-trails', {
+        type: 'geojson',
+        data: emptyLines,
+      })
+    }
+
+    if (!map.getLayer('aerotrace-vessel-trail')) {
+      map.addLayer({
+        id: 'aerotrace-vessel-trail',
+        type: 'line',
+        source: 'aerotrace-vessel-trails',
+        paint: {
+          'line-color': '#35D7FF',
+          'line-width': 2,
+          'line-opacity': 0.7,
+        },
+      })
+    }
+
     if (!map.getSource(VESSEL_SOURCE)) {
       map.addSource(VESSEL_SOURCE, { type: 'geojson', data: emptyVessels })
     }
@@ -1551,6 +1593,7 @@ export default function MapView({
     }
 
     updateVesselSource(map)
+    updateVesselTrail(map)
     updateAircraftSource(map)
     updateHistoryPath(map)
     updateLiveTrail(map)
@@ -1802,6 +1845,45 @@ export default function MapView({
       cancelled = true
       window.clearInterval(interval)
       controller?.abort()
+    }
+  }, [selectedId])
+
+  useEffect(() => {
+    if (!selectedIdRef.current || !selectedIdRef.current.startsWith('vessel:')) {
+      const map = mapRef.current
+      if (map) updateVesselTrail(map)
+      return
+    }
+
+    const selected = vesselsRef.current.find((item) => item.id === selectedIdRef.current)
+    if (!selected) return
+
+    let cancelled = false
+    const loadTrack = async () => {
+      try {
+        const response = await fetch('/api/vessels/' + encodeURIComponent(selected.mmsi) + '/track')
+        if (!response.ok || cancelled) return
+        const data = await response.json() as {
+          points?: Array<{ longitude: number; latitude: number }>
+        }
+        const positions = (data.points ?? [])
+          .filter((point) =>
+            Number.isFinite(point.longitude) &&
+            Number.isFinite(point.latitude),
+          )
+          .map((point) => [point.longitude, point.latitude] as Position)
+        vesselTrackRef.current.set(selected.mmsi, positions)
+        if (!cancelled && mapRef.current) updateVesselTrail(mapRef.current)
+      } catch {
+        // Vessel trails are supplemental; keep the live marker working if the history request fails.
+      }
+    }
+
+    void loadTrack()
+    const interval = window.setInterval(() => void loadTrack(), 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
     }
   }, [selectedId])
 

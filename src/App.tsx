@@ -1058,7 +1058,7 @@ export default function App() {
               )
             }
           >
-            Selected: {selectedAircraft.callsign || selectedAircraft.icao24}
+            Selected: {selectedVessel ? (selectedVessel.name || selectedVessel.mmsi) : (selectedAircraft?.callsign || selectedAircraft?.icao24)}
           </button>
         )}
 

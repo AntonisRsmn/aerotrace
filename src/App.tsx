@@ -327,6 +327,8 @@ export default function App() {
       return
     }
 
+    // Demo aircraft already contain generated metadata and routes. Never ask
+    // live metadata providers for details about a simulated aircraft.
     if (selectedAircraft.isDemo) {
       setSelectedDetails({
         registration: selectedAircraft.registration,
@@ -361,7 +363,9 @@ export default function App() {
         if (
           !active ||
           (caught instanceof Error && caught.name === 'AbortError')
-        ) return
+        ) {
+          return
+        }
 
         setDetailsError(
           caught instanceof Error
@@ -693,33 +697,25 @@ export default function App() {
 
         <aside
           className={`details-panel panel ${
-            selectedAircraft ? 'has-selection' : ''
+            (selectedAircraft || selectedVessel) ? 'has-selection' : ''
           } ${mobilePanel === 'details' ? 'mobile-panel-open' : ''}`}
-          aria-label="Selected aircraft details"
+          aria-label="Selected target details"
         >
           <div className="panel-heading details-panel-heading">
             <div>
-              <span className="eyebrow">FLIGHT INSPECTOR</span>
-              <h2>Aircraft details</h2>
+              <span className="eyebrow">{selectedVessel ? 'VESSEL INSPECTOR' : 'FLIGHT INSPECTOR'}</span>
+              <h2>{selectedVessel ? 'Vessel details' : 'Aircraft details'}</h2>
               <p>Live position and identification</p>
             </div>
             <button
               type="button"
               className="panel-close mobile-only"
               onClick={() => setMobilePanel(null)}
-              aria-label="Close details panel"
-            >
-              ×
-            </button>
-          </div>
-
-          {!selectedAircraft && !selectedVessel ? (
+              ari          {!selectedAircraft && !selectedVessel ? (
             <div className="details-empty">
               <div className="empty-plane" aria-hidden="true">✦</div>
               <strong>Select an aircraft or vessel</strong>
-              <p>
-                Choose a target from the map to inspect its live tracking data.
-              </p>
+              <p>Choose a target from the map to inspect its live tracking data.</p>
             </div>
           ) : selectedVessel ? (
             <div className="details-content">
@@ -730,15 +726,10 @@ export default function App() {
                   <p>{selectedVessel.vesselType}</p>
                 </div>
               </div>
-
               <div className="details-badges">
-                <span className="detail-badge airborne-badge">
-                  <span className="badge-dot" />
-                  AIS TRACKED
-                </span>
+                <span className="detail-badge airborne-badge"><span className="badge-dot" /> AIS TRACKED</span>
                 <span className="detail-badge">VESSEL</span>
               </div>
-
               <section className="detail-section">
                 <div className="section-heading section-heading-plain"><span>VESSEL DATA</span></div>
                 <div className="detail-grid">
@@ -748,7 +739,6 @@ export default function App() {
                   <div className="detail-metric"><span>Draught</span><strong>{selectedVessel.draughtM == null ? '—' : formatNumber(selectedVessel.draughtM, 1) + ' m'}</strong></div>
                 </div>
               </section>
-
               <section className="detail-section">
                 <div className="section-heading section-heading-plain"><span>IDENTIFICATION</span></div>
                 <div className="detail-line"><span>MMSI</span><strong>{selectedVessel.mmsi}</strong></div>
@@ -758,20 +748,16 @@ export default function App() {
                 <div className="detail-line"><span>Destination</span><strong>{selectedVessel.destination || 'Unavailable'}</strong></div>
                 <div className="detail-line"><span>Navigation status</span><strong>{selectedVessel.navigationStatus == null ? 'Unavailable' : String(selectedVessel.navigationStatus)}</strong></div>
               </section>
-
               <section className="detail-section">
                 <div className="section-heading section-heading-plain"><span>POSITION</span></div>
                 <div className="detail-line"><span>Latitude</span><strong>{selectedVessel.latitude.toFixed(5)}°</strong></div>
                 <div className="detail-line"><span>Longitude</span><strong>{selectedVessel.longitude.toFixed(5)}°</strong></div>
                 <div className="detail-line"><span>Last AIS update</span><strong>{formatLastSeen(selectedVessel.lastSeenSeconds)}</strong></div>
               </section>
-
-              <p className="data-disclaimer">
-                Live vessel position and identification data supplied by AISStream. The recorded trail is built from AIS position reports received by AeroTrace.
-              </p>
+              <p className="data-disclaimer">Live vessel position and identification data supplied by AISStream. The recorded trail is built from AIS position reports received by AeroTrace.</p>
             </div>
           ) : (
-          { (
+
             <div className="details-empty">
               <div className="empty-plane" aria-hidden="true">✈</div>
               <strong>Select an aircraft</strong>
@@ -780,208 +766,6 @@ export default function App() {
                 to inspect its live data.
               </p>
             </div>
-          
-            <div className="details-content">
-              <div className="selected-aircraft-title">
-                <div className="selected-plane-icon" aria-hidden="true">✈</div>
-                <div className="selected-title-text">
-                  <h3>{selectedAircraft.callsign || 'Unknown callsign'}</h3>
-                  <p>
-                    {selectedDetails?.aircraftType ||
-                      selectedAircraft.aircraftType ||
-                      selectedDetails?.airline ||
-                      selectedAircraft.airline ||
-                      'Aircraft type unavailable'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="details-badges">
-                <span
-                  className={`detail-badge ${
-                    selectedAircraft.onGround === true
-                      ? 'ground-badge'
-                      : selectedAircraft.onGround === false
-                        ? 'airborne-badge'
-                        : ''
-                  }`}
-                >
-                  <span className="badge-dot" />
-                  {selectedAircraft.onGround === true
-                    ? 'On ground'
-                    : selectedAircraft.onGround === false
-                      ? 'Airborne'
-                      : 'Status unknown'}
-                </span>
-                <span className="detail-badge">
-                  {selectedAircraft.category}
-                </span>
-              </div>
-
-              <AircraftPhoto
-                icao24={selectedAircraft.icao24}
-                registration={
-                  selectedDetails?.registration || selectedAircraft.registration
-                }
-                callsign={selectedAircraft.callsign}
-                aircraftType={
-                  selectedDetails?.aircraftType || selectedAircraft.aircraftType
-                }
-                airline={
-                  selectedDetails?.airline || selectedAircraft.airline
-                }
-              />
-
-              <section className="detail-section">
-                <div className="section-heading section-heading-plain">
-                  <span>FLIGHT DATA</span>
-                </div>
-                <div className="detail-grid">
-                  <div className="detail-metric">
-                    <span>Altitude</span>
-                    <strong>{formatAltitude(selectedAircraft.altitudeFt)}</strong>
-                  </div>
-                  <div className="detail-metric">
-                    <span>Ground speed</span>
-                    <strong>{formatSpeed(selectedAircraft.speedKt)}</strong>
-                  </div>
-                  <div className="detail-metric">
-                    <span>Heading</span>
-                    <strong>
-                      {selectedAircraft.heading == null
-                        ? '—'
-                        : `${formatNumber(selectedAircraft.heading)}°`}
-                    </strong>
-                  </div>
-                  <div className="detail-metric">
-                    <span>Vertical rate</span>
-                    <strong>
-                      {formatVerticalRate(selectedAircraft.verticalRateFpm)}
-                    </strong>
-                  </div>
-                </div>
-              </section>
-
-              <section className="detail-section">
-                <div className="section-heading section-heading-plain">
-                  <span>IDENTIFICATION</span>
-                </div>
-                <div className="detail-line">
-                  <span>ICAO24</span>
-                  <strong>{selectedAircraft.icao24.toUpperCase()}</strong>
-                </div>
-                <div className="detail-line">
-                  <span>Registration</span>
-                  <strong>
-                    {selectedDetails?.registration ||
-                      selectedAircraft.registration ||
-                      'Unavailable'}
-                  </strong>
-                </div>
-                <div className="detail-line">
-                  <span>Aircraft type</span>
-                  <strong>
-                    {selectedDetails?.aircraftType ||
-                      selectedAircraft.aircraftType ||
-                      'Unavailable'}
-                  </strong>
-                </div>
-                <div className="detail-line">
-                  <span>Airline / operator</span>
-                  <strong>
-                    {selectedDetails?.airline ||
-                      selectedAircraft.airline ||
-                      'Unavailable'}
-                  </strong>
-                </div>
-                <div className="detail-line">
-                  <span>Country</span>
-                  <strong>
-                    {selectedAircraft.originCountry || 'Unavailable'}
-                  </strong>
-                </div>
-                {selectedAircraft.isDemo && (
-                  <div className="detail-line">
-                    <span>Track source</span>
-                    <strong>{selectedAircraft.replaySource || 'Historical ADS-B archive'}</strong>
-                  </div>
-                )}
-                {selectedAircraft.recordedFlightDate && (
-                  <div className="detail-line">
-                    <span>Recorded flight date</span>
-                    <strong>{new Date(selectedAircraft.recordedFlightDate).toLocaleString()}</strong>
-                  </div>
-                )}
-                <div className="detail-line">
-                  <span>Squawk</span>
-                  <strong>{selectedAircraft.squawk || 'Unavailable'}</strong>
-                </div>
-                <div className="detail-line">
-                  <span>Last contact</span>
-                  <strong>
-                    {formatLastSeen(selectedAircraft.lastSeenSeconds)}
-                  </strong>
-                </div>
-              </section>
-
-              <section className="detail-section">
-                <div className="section-heading section-heading-plain">
-                  <span>FLIGHT ROUTE</span>
-                </div>
-
-                <div style={routeCardStyle}>
-                  <div style={routeEndpointStyle}>
-                    <span style={routeLabelStyle}>DEPARTURE</span>
-                    <strong style={routeCodeStyle}>
-                      {origin || 'Unknown'}
-                    </strong>
-                  </div>
-
-                  <div
-                    aria-hidden="true"
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: '4px',
-                      color: '#58A9FF',
-                    }}
-                  >
-                    <span style={{ fontSize: '18px', lineHeight: 1 }}>✈</span>
-                    <span
-                      style={{
-                        width: '100%',
-                        borderTop: '1px dashed rgba(88, 169, 255, 0.7)',
-                      }}
-                    />
-                  </div>
-
-                  <div
-                    style={{
-                      ...routeEndpointStyle,
-                      alignItems: 'flex-end',
-                      textAlign: 'right',
-                    }}
-                  >
-                    <span style={routeLabelStyle}>DESTINATION</span>
-                    <strong style={routeCodeStyle}>
-                      {destination || 'Unknown'}
-                    </strong>
-                  </div>
-                </div>
-
-                <p className="data-disclaimer">
-                  {selectedAircraft.isDemo
-                    ? `Historical ADS-B route replay${selectedAircraft.recordedFlightDate ? ` recorded (
-            <div className="details-empty">
-              <div className="empty-plane" aria-hidden="true">✈</div>
-              <strong>Select an aircraft</strong>
-              <p>
-                Choose an aircraft from the list or click a marker on the map
-                to inspect its live data.
-              </p>
-            </div>
-          ) : (
             <div className="details-content">
               <div className="selected-aircraft-title">
                 <div className="selected-plane-icon" aria-hidden="true">✈</div>
@@ -1202,6 +986,11 @@ export default function App() {
                 {selectedAircraft.isDemo
                   ? 'The blue line follows an archived ADS-B flight track. Current marker position is replayed for demonstration and does not represent the aircraft’s live location.'
                   : 'The recorded trail begins when AeroTrace observes the aircraft. The blue line is a heading-based estimate, not a confirmed route. Registration, aircraft type, airline and route details may not be available in every response.'}
+              </p>
+            </div>
+          )}
+
+          )etails may not be available in every response.'}
               </p>
             </div>
           )}

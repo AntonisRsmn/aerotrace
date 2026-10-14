@@ -1331,18 +1331,25 @@ export default function MapView({
     if (!map.getLayer(VESSEL_LAYER)) {
       map.addLayer({
         id: VESSEL_LAYER,
-        type: 'symbol',
+        type: 'circle',
         source: VESSEL_SOURCE,
-        layout: {
-          'icon-image': 'marker-15',
-          'icon-size': ['case', ['boolean', ['get', 'selected'], false], 1.25, 0.9],
-          'icon-rotate': ['get', 'heading'],
-          'icon-rotation-alignment': 'map',
-          'icon-allow-overlap': true,
-          'icon-ignore-placement': true,
-        },
         paint: {
-          'icon-opacity': 0.95,
+          'circle-radius': [
+            'case',
+            ['boolean', ['get', 'selected'], false],
+            8,
+            5,
+          ],
+          'circle-color': '#63F3C4',
+          'circle-opacity': 0.95,
+          'circle-stroke-color': '#07111F',
+          'circle-stroke-width': [
+            'case',
+            ['boolean', ['get', 'selected'], false],
+            3,
+            2,
+          ],
+          'circle-stroke-opacity': 0.95,
         },
       })
 

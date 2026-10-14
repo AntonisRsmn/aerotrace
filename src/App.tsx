@@ -783,8 +783,8 @@ export default function App() {
               </section>
               <section className="detail-section">
                 <div className="section-heading section-heading-plain"><span>POSITION</span></div>
-                <div className="detail-line"><span>Latitude</span><strong>{selectedVessel.latitude.toFixed(5)}°</strong></div>
-                <div className="detail-line"><span>Longitude</span><strong>{selectedVessel.longitude.toFixed(5)}°</strong></div>
+                <div className="detail-line"><span>Latitude</span><strong>{formatNumber(selectedVessel.latitude, 5)}°</strong></div>
+                <div className="detail-line"><span>Longitude</span><strong>{formatNumber(selectedVessel.longitude, 5)}°</strong></div>
                 <div className="detail-line"><span>Last AIS update</span><strong>{formatLastSeen(selectedVessel.lastSeenSeconds)}</strong></div>
               </section>
               <p className="data-disclaimer">Live vessel position and identification data supplied by AISStream. The recorded trail is built from AIS position reports received by AeroTrace.</p>

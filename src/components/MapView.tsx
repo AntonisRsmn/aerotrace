@@ -1328,28 +1328,62 @@ export default function MapView({
       map.addSource(VESSEL_SOURCE, { type: 'geojson', data: emptyVessels })
     }
 
+    if (!map.hasImage('aerotrace-vessel')) {
+      const size = 32
+      const canvas = document.createElement('canvas')
+      canvas.width = size
+      canvas.height = size
+      const context = canvas.getContext('2d')
+
+      if (context) {
+        context.translate(size / 2, size / 2)
+        context.rotate(Math.PI / 2)
+        context.beginPath()
+        context.moveTo(-12, -7)
+        context.lineTo(8, -7)
+        context.lineTo(13, 0)
+        context.lineTo(8, 7)
+        context.lineTo(-12, 7)
+        context.lineTo(-7, 0)
+        context.closePath()
+        context.fillStyle = '#63F3C4'
+        context.fill()
+        context.strokeStyle = '#07111F'
+        context.lineWidth = 2
+        context.stroke()
+        context.fillStyle = '#07111F'
+        context.fillRect(-5, -4, 9, 8)
+      }
+
+      map.addImage('aerotrace-vessel', {
+        width: size,
+        height: size,
+        data: context
+          ? context.getImageData(0, 0, size, size).data
+          : new Uint8Array(size * size * 4),
+      })
+    }
+
     if (!map.getLayer(VESSEL_LAYER)) {
       map.addLayer({
         id: VESSEL_LAYER,
-        type: 'circle',
+        type: 'symbol',
         source: VESSEL_SOURCE,
+        layout: {
+          'icon-image': 'aerotrace-vessel',
+          'icon-size': [
+            'case',
+            ['boolean', ['get', 'selected'], false],
+            1.15,
+            0.85,
+          ],
+          'icon-rotate': ['get', 'heading'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
         paint: {
-          'circle-radius': [
-            'case',
-            ['boolean', ['get', 'selected'], false],
-            8,
-            5,
-          ],
-          'circle-color': '#63F3C4',
-          'circle-opacity': 0.95,
-          'circle-stroke-color': '#07111F',
-          'circle-stroke-width': [
-            'case',
-            ['boolean', ['get', 'selected'], false],
-            3,
-            2,
-          ],
-          'circle-stroke-opacity': 0.95,
+          'icon-opacity': 0.98,
         },
       })
 

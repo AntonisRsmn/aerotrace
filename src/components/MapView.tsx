@@ -1817,7 +1817,7 @@ export default function MapView({
     }
 
     ensureMapLayers(map)
-  }, [aircraft, vessels, selectedId, showTrails, showLabels, showAirports])
+  }, [aircraft, vessels, selectedId, selectedVesselId, showTrails, showLabels, showAirports])
 
   useEffect(() => {
     if (!selectedId) {

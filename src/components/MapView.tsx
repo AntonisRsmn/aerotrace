@@ -3,7 +3,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef } from 'react'
 import maplibregl from 'maplibre-gl'
 import type { FeatureCollection, Point, LineString } from 'geojson'
-import type { Aircraft } from '../types'
+import type { Aircraft, Vessel } from '../types'
 
 export type MapBounds = {
   lamin: number
@@ -14,6 +14,7 @@ export type MapBounds = {
 
 type Props = {
   aircraft: Aircraft[]
+  vessels?: Vessel[]
   selectedId: string | null
   onSelect: (id: string) => void
   onBoundsChange: (bounds: MapBounds) => void
@@ -62,6 +63,10 @@ type AirportProperties = {
   icao: string
 }
 
+const VESSEL_SOURCE = 'aerotrace-vessels'
+const VESSEL_LAYER = 'aerotrace-vessel-symbols'
+const VESSEL_LABEL_LAYER = 'aerotrace-vessel-labels'
+
 const AIRCRAFT_SOURCE = 'aerotrace-aircraft'
 const AIRCRAFT_GLOW_LAYER = 'aerotrace-aircraft-glow'
 const AIRCRAFT_LAYER = 'aerotrace-aircraft-symbols'
@@ -85,6 +90,18 @@ const HELICOPTER_IMAGE = 'aerotrace-helicopter-blue-v3'
 const HELICOPTER_IMAGE_HOVER = 'aerotrace-helicopter-yellow-v3'
 
 const emptyLines: FeatureCollection<LineString> = {
+  type: 'FeatureCollection',
+  features: [],
+}
+
+type VesselProperties = {
+  id: string
+  name: string
+  heading: number
+  selected: boolean
+}
+
+const emptyVessels: FeatureCollection<Point, VesselProperties> = {
   type: 'FeatureCollection',
   features: [],
 }
@@ -155,6 +172,7 @@ function parseCsvLine(line: string): string[] {
 
 export default function MapView({
   aircraft,
+  vessels = [],
   selectedId,
   onSelect,
   onBoundsChange,
@@ -166,7 +184,9 @@ export default function MapView({
   const mapRef = useRef<maplibregl.Map | null>(null)
 
   const aircraftRef = useRef(aircraft)
+  const vesselsRef = useRef(vessels)
   const selectedIdRef = useRef(selectedId)
+
   const onSelectRef = useRef(onSelect)
   const onBoundsChangeRef = useRef(onBoundsChange)
   const showTrailsRef = useRef(showTrails)
@@ -199,6 +219,10 @@ export default function MapView({
   useEffect(() => {
     aircraftRef.current = aircraft
   }, [aircraft])
+
+  useEffect(() => {
+    vesselsRef.current = vessels
+  }, [vessels])
 
   useEffect(() => {
     selectedIdRef.current = selectedId
@@ -465,6 +489,45 @@ export default function MapView({
     } else {
       aircraftAnimationFrameRef.current = null
     }
+  }
+
+  function updateVesselSource(map: maplibregl.Map) {
+    if (mapRef.current !== map) return
+    const source = map.getSource(VESSEL_SOURCE) as maplibregl.GeoJSONSource | undefined
+    if (!source) return
+
+    const features: FeatureCollection<Point, VesselProperties>['features'] = []
+
+    for (const vessel of vesselsRef.current) {
+      if (
+        !Number.isFinite(vessel.longitude) ||
+        !Number.isFinite(vessel.latitude) ||
+        vessel.latitude < -90 ||
+        vessel.latitude > 90 ||
+        vessel.longitude < -180 ||
+        vessel.longitude > 180
+      ) continue
+
+      features.push({
+        type: 'Feature',
+        id: vessel.id,
+        properties: {
+          id: vessel.id,
+          name: vessel.name?.trim() || vessel.mmsi,
+          heading: vessel.heading ?? vessel.course ?? 0,
+          selected: vessel.id === selectedIdRef.current,
+        },
+        geometry: {
+          type: 'Point',
+          coordinates: [vessel.longitude, vessel.latitude],
+        },
+      })
+    }
+
+    source.setData({
+      type: 'FeatureCollection',
+      features,
+    })
   }
 
   function updateAircraftSource(map: maplibregl.Map) {
@@ -1219,6 +1282,67 @@ export default function MapView({
       })
     }
 
+    if (!map.getSource(VESSEL_SOURCE)) {
+      map.addSource(VESSEL_SOURCE, { type: 'geojson', data: emptyVessels })
+    }
+
+    if (!map.getLayer(VESSEL_LAYER)) {
+      map.addLayer({
+        id: VESSEL_LAYER,
+        type: 'symbol',
+        source: VESSEL_SOURCE,
+        layout: {
+          'icon-image': 'marker-15',
+          'icon-size': ['case', ['boolean', ['get', 'selected'], false], 1.25, 0.9],
+          'icon-rotate': ['get', 'heading'],
+          'icon-rotation-alignment': 'map',
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+        paint: {
+          'icon-opacity': 0.95,
+        },
+      })
+
+      map.on('click', VESSEL_LAYER, (event) => {
+        const id = event.features?.[0]?.properties?.id
+        if (typeof id === 'string') {
+          onSelectRef.current(id === selectedIdRef.current ? '' : id)
+        }
+      })
+
+      map.on('mousemove', VESSEL_LAYER, () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+
+      map.on('mouseleave', VESSEL_LAYER, () => {
+        map.getCanvas().style.cursor = ''
+      })
+    }
+
+    if (!map.getLayer(VESSEL_LABEL_LAYER)) {
+      map.addLayer({
+        id: VESSEL_LABEL_LAYER,
+        type: 'symbol',
+        source: VESSEL_SOURCE,
+        filter: ['==', ['get', 'selected'], true],
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+          'text-size': 11,
+          'text-anchor': 'bottom',
+          'text-offset': [0, -1.25],
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: {
+          'text-color': '#63F3C4',
+          'text-halo-color': '#07111F',
+          'text-halo-width': 1.5,
+        },
+      })
+    }
+
     if (!map.getSource(AIRCRAFT_SOURCE)) {
       map.addSource(AIRCRAFT_SOURCE, {
         type: 'geojson',
@@ -1426,6 +1550,7 @@ export default function MapView({
       )
     }
 
+    updateVesselSource(map)
     updateAircraftSource(map)
     updateHistoryPath(map)
     updateLiveTrail(map)
@@ -1566,7 +1691,7 @@ export default function MapView({
     }
 
     ensureMapLayers(map)
-  }, [aircraft, selectedId, showTrails, showLabels, showAirports])
+  }, [aircraft, vessels, selectedId, showTrails, showLabels, showAirports])
 
   useEffect(() => {
     if (!selectedId) {

@@ -16,7 +16,8 @@ type Props = {
   aircraft: Aircraft[]
   vessels?: Vessel[]
   selectedId: string | null
-  onSelect: (id: string) => void
+  selectedVesselId?: string | null
+  onSelect: (id: string, kind?: 'aircraft' | 'vessel') => void
   onBoundsChange: (bounds: MapBounds) => void
   showTrails?: boolean
   showLabels?: boolean
@@ -175,6 +176,7 @@ export default function MapView({
   aircraft,
   vessels = [],
   selectedId,
+  selectedVesselId = null,
   onSelect,
   onBoundsChange,
   showTrails = true,
@@ -187,6 +189,7 @@ export default function MapView({
   const aircraftRef = useRef(aircraft)
   const vesselsRef = useRef(vessels)
   const selectedIdRef = useRef(selectedId)
+  const selectedVesselIdRef = useRef(selectedVesselId)
 
   const onSelectRef = useRef(onSelect)
   const onBoundsChangeRef = useRef(onBoundsChange)
@@ -228,6 +231,10 @@ export default function MapView({
   useEffect(() => {
     selectedIdRef.current = selectedId
   }, [selectedId])
+
+  useEffect(() => {
+    selectedVesselIdRef.current = selectedVesselId
+  }, [selectedVesselId])
 
   useEffect(() => {
     onSelectRef.current = onSelect
@@ -1390,7 +1397,7 @@ export default function MapView({
       map.on('click', VESSEL_LAYER, (event) => {
         const id = event.features?.[0]?.properties?.id
         if (typeof id === 'string') {
-          onSelectRef.current(id === selectedIdRef.current ? '' : id)
+          onSelectRef.current(id === selectedVesselIdRef.current ? '' : id, 'vessel')
         }
       })
 

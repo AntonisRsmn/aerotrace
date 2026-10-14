@@ -717,13 +717,14 @@ export default function App() {
             </button>
           </div>
 
-          {!selectedAircraft && !selectedVessel ? (
+          {!selectedAircraft && !selectedVessel && (
             <div className="details-empty">
               <div className="empty-plane" aria-hidden="true">✦</div>
               <strong>Select an aircraft or vessel</strong>
               <p>Choose a target from the map to inspect its live tracking data.</p>
             </div>
-          ) : selectedVessel ? (
+          )}
+          {selectedVessel && (
             <div className="details-content">
               <div className="selected-aircraft-title">
                 <div className="selected-plane-icon" aria-hidden="true">⚓</div>
@@ -762,7 +763,8 @@ export default function App() {
               </section>
               <p className="data-disclaimer">Live vessel position and identification data supplied by AISStream. The recorded trail is built from AIS position reports received by AeroTrace.</p>
             </div>
-          ) : selectedAircraft ? (
+          )}
+          {selectedAircraft && (
 
             <div className="details-content">
               <div className="selected-aircraft-title">

@@ -87,6 +87,7 @@ export default function App() {
   const [vesselSource, setVesselSource] = useState('AISStream')
   const [bounds, setBounds] = useState<MapBounds | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedVesselId, setSelectedVesselId] = useState<string | null>(null)
   const [trafficFilter, setTrafficFilter] = useState<'all' | 'aircraft' | 'vessels'>('all')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'airborne' | 'ground' | 'unknown'>('all')
@@ -120,7 +121,18 @@ export default function App() {
     setBounds(nextBounds)
   }, [])
 
-  const handleSelect = useCallback((id: string) => {
+  const handleSelect = useCallback((id: string, kind: 'aircraft' | 'vessel' = 'aircraft') => {
+    if (kind === 'vessel') {
+      setSelectedId(null)
+      setSelectedVesselId((currentId) => {
+        const nextId = !id || currentId === id ? null : id
+        setMobilePanel(nextId ? 'details' : null)
+        return nextId
+      })
+      return
+    }
+
+    setSelectedVesselId(null)
     setSelectedId((currentId) => {
       const nextId = !id || currentId === id ? null : id
       setMobilePanel(nextId ? 'details' : null)
@@ -320,8 +332,8 @@ export default function App() {
   )
 
   const selectedVessel = useMemo(
-    () => vessels.find((item) => item.id === selectedId) ?? null,
-    [vessels, selectedId],
+    () => vessels.find((item) => item.id === selectedVesselId) ?? null,
+    [vessels, selectedVesselId],
   )
 
   useEffect(() => {
@@ -444,6 +456,7 @@ export default function App() {
             aircraft={visibleAircraft}
             vessels={visibleVessels}
             selectedId={selectedId}
+            selectedVesselId={selectedVesselId}
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}
             showTrails={showTrails}

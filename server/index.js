@@ -35,6 +35,9 @@ const REQUEST_TIMEOUT_MS = 15_000
 const MAX_POINTS_PER_AIRCRAFT = 5000
 const MIN_TRACK_DISTANCE_METERS = 100
 const MIN_TRACK_INTERVAL_SECONDS = 15
+const TAKEOFF_TRACK_SPEED_KT = 70
+const LANDING_TRACK_STOP_SPEED_KT = 45
+const AIRBORNE_TRACK_ALTITUDE_FT = 150
 const MAX_TRACKED_AIRCRAFT = 10_000
 const MAX_DETAILS_CACHE_SIZE = 2000
 const MAX_PHOTO_CACHE_SIZE = 2000
@@ -238,6 +241,7 @@ async function recordAircraftPositions(aircraft) {
       longitude: item.longitude,
       latitude: item.latitude,
       onGround: item.onGround,
+      speedKt: item.speedKt,
       heading: item.heading,
       altitudeFt: item.altitudeFt,
     }
@@ -246,14 +250,54 @@ async function recordAircraftPositions(aircraft) {
       icao24: item.icao24,
       callsign: item.callsign,
       points: [],
+      trackingActive: false,
+      flightSequence: 0,
     }
 
     history.callsign = item.callsign || history.callsign
+    history.points = Array.isArray(history.points) ? history.points : []
+    history.trackingActive = history.trackingActive === true
+    history.flightSequence = Number.isInteger(history.flightSequence)
+      ? history.flightSequence
+      : 0
+
+    const speedKt = Number.isFinite(item.speedKt) ? item.speedKt : null
+    const altitudeFt = Number.isFinite(item.altitudeFt) ? item.altitudeFt : null
+    const clearlyAirborne =
+      item.onGround === false ||
+      (altitudeFt != null && altitudeFt >= AIRBORNE_TRACK_ALTITUDE_FT)
+    const takeoffRoll =
+      item.onGround === true &&
+      speedKt != null &&
+      speedKt >= TAKEOFF_TRACK_SPEED_KT
+    const landedAndSlow =
+      item.onGround === true &&
+      speedKt != null &&
+      speedKt <= LANDING_TRACK_STOP_SPEED_KT
+
+    if (!history.trackingActive) {
+      if (!takeoffRoll && !clearlyAirborne) {
+        tracks[item.id] = history
+        continue
+      }
+
+      history.trackingActive = true
+      history.flightSequence += 1
+    } else if (landedAndSlow) {
+      history.trackingActive = false
+      tracks[item.id] = history
+      changed = true
+      continue
+    }
+
+    point.flightSequence = history.flightSequence
 
     // Keep persisted observations in timestamp order, including when an API
     // response contains a slightly older observation than the last saved one.
     history.points.sort((a, b) => a.time - b.time)
-    const previous = history.points[history.points.length - 1]
+    const previous = [...history.points]
+      .reverse()
+      .find((savedPoint) => savedPoint.flightSequence === history.flightSequence)
 
     if (previous && timestamp >= previous.time) {
       const elapsed = timestamp - previous.time
@@ -2280,12 +2324,19 @@ const server = createServer(async (request, response) => {
     }
 
     const history = tracks[icao24]
-    const recordedPoints = history?.points ?? []
-    const providerPoints = await fetchOpenSkyTrackPoints(icao24)
+    const allRecordedPoints = history?.points ?? []
+    const activeFlightSequence =
+      history?.trackingActive === true ? history.flightSequence : null
+    const recordedPoints = activeFlightSequence == null
+      ? []
+      : allRecordedPoints.filter(
+          (point) => point.flightSequence === activeFlightSequence,
+        )
+    const providerPoints = []
 
-    // Combine AeroTrace's higher-frequency observations with OpenSky's
-    // trajectory waypoints, then sort the union by observation time.
-    const combined = [...recordedPoints, ...providerPoints]
+    // Only expose the current AeroTrace-recorded flight. Ground movement and
+    // previous flights must never be connected into the selected live trail.
+    const combined = [...recordedPoints]
       .filter(
         (point) =>
           Number.isFinite(point.time) &&

@@ -61,9 +61,9 @@ function normalizeVesselType(type) {
   if (code >= 70 && code <= 79) return 'Cargo'
   if (code >= 80 && code <= 89) return 'Tanker'
   if (code === 60 || code === 61 || code === 62 || code === 63 || code === 64 || code === 65 || code === 69) return 'Passenger'
-  if (code >= 30 && code <= 39) return 'Tug / Special'
-  if (code >= 36 && code <= 37) return 'Sailing / Pleasure'
   if (code === 30) return 'Fishing'
+  if (code >= 36 && code <= 37) return 'Sailing / Pleasure'
+  if (code >= 31 && code <= 35) return 'Tug / Special'
   return 'Other'
 }
 
@@ -3135,8 +3135,7 @@ server.listen(PORT, () => {
   console.log(`AeroTrace API listening on http://localhost:${PORT}`)
 
   if (process.env.AISSTREAM_API_KEY) {
-    console.log('[AeroTrace AIS] AISStream API key configured.')
-    connectAISStream()
+    console.log('[AeroTrace AIS] AISStream API key configured. Waiting for vessel map bounds.')
   } else {
     console.warn('[AeroTrace AIS] AISStream API key is not configured; vessels disabled.')
   }

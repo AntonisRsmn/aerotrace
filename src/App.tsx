@@ -8,7 +8,8 @@ import {
   type AircraftDetails,
   type MapBounds,
 } from './api/aircraft'
-import type { Aircraft } from './types'
+import type { Aircraft, Vessel } from './types'
+import { fetchVessels } from './api/vessels'
 
 function formatNumber(value: number | null | undefined, digits = 0) {
   if (value == null || !Number.isFinite(value)) return '—'
@@ -82,6 +83,8 @@ const routeCodeStyle = {
 
 export default function App() {
   const [aircraft, setAircraft] = useState<Aircraft[]>([])
+  const [vessels, setVessels] = useState<Vessel[]>([])
+  const [vesselSource, setVesselSource] = useState('AISStream')
   const [bounds, setBounds] = useState<MapBounds | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -208,6 +211,46 @@ export default function App() {
     const interval = window.setInterval(() => {
       void refreshAircraft()
     }, 10_000)
+
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      controller?.abort()
+    }
+  }, [bounds])
+
+  useEffect(() => {
+    if (!bounds) return
+
+    let active = true
+    let requestInProgress = false
+    let controller: AbortController | null = null
+
+    const refreshVessels = async () => {
+      if (requestInProgress) return
+      requestInProgress = true
+      const currentController = new AbortController()
+      controller = currentController
+
+      try {
+        const result = await fetchVessels(bounds, currentController.signal)
+        if (!active) return
+        setVessels(result.vessels)
+        setVesselSource(result.source)
+      } catch (caught) {
+        if (
+          !active ||
+          currentController.signal.aborted ||
+          (caught instanceof Error && caught.name === 'AbortError')
+        ) return
+        console.warn('[AeroTrace vessels]', caught instanceof Error ? caught.message : caught)
+      } finally {
+        requestInProgress = false
+      }
+    }
+
+    void refreshVessels()
+    const interval = window.setInterval(() => void refreshVessels(), 5000)
 
     return () => {
       active = false
@@ -389,6 +432,7 @@ export default function App() {
         <div className="map-stage">
           <MapView
             aircraft={filteredAircraft}
+            vessels={vessels}
             selectedId={selectedId}
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}

@@ -49,6 +49,9 @@ const AISSTREAM_MAX_VESSELS = 25_000
 const AISSTREAM_STALE_MS = 10 * 60_000
 
 const vesselCache = new Map()
+const vesselTrackCache = new Map()
+const MAX_VESSEL_TRACK_POINTS = 600
+const VESSEL_TRACK_MIN_INTERVAL_MS = 30_000
 let aisStreamSocket = null
 let aisStreamReconnectTimer = null
 let aisStreamBoundsKey = ''
@@ -114,6 +117,20 @@ function vesselFromPositionReport(message) {
   existing.vesselType = existing.vesselType || 'Unknown'
 
   vesselCache.set(existing.mmsi, existing)
+  const track = vesselTrackCache.get(existing.mmsi) ?? []
+  const lastPoint = track[track.length - 1]
+  if (!lastPoint || Date.now() - lastPoint.time >= VESSEL_TRACK_MIN_INTERVAL_MS) {
+    track.push({
+      time: Date.now(),
+      latitude,
+      longitude,
+      speedKt: existing.speedKt,
+      course: existing.course,
+      heading: existing.heading,
+    })
+    if (track.length > MAX_VESSEL_TRACK_POINTS) track.splice(0, track.length - MAX_VESSEL_TRACK_POINTS)
+    vesselTrackCache.set(existing.mmsi, track)
+  }
 
   while (vesselCache.size > AISSTREAM_MAX_VESSELS) {
     const oldest = vesselCache.keys().next().value
@@ -2506,6 +2523,18 @@ const server = createServer(async (request, response) => {
     return sendJson(response, 200, {
       photo: proxiedAircraftPhoto(photo),
       cached: false,
+    })
+  }
+
+  if (request.method === 'GET' && url.pathname.startsWith('/api/vessels/') && url.pathname.endsWith('/track')) {
+    const mmsi = decodeURIComponent(url.pathname.slice('/api/vessels/'.length, -'/track'.length))
+    if (!/^\\d{9}$/.test(mmsi)) {
+      return sendJson(response, 400, { error: 'Invalid MMSI.' })
+    }
+
+    return sendJson(response, 200, {
+      mmsi,
+      points: vesselTrackCache.get(mmsi) ?? [],
     })
   }
 

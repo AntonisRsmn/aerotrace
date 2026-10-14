@@ -228,10 +228,25 @@ function connectAISStream() {
     sendAISStreamSubscription()
   })
 
-  socket.addEventListener('message', (event) => {
+  socket.addEventListener('message', async (event) => {
     try {
-      const payload = JSON.parse(String(event.data))
+      let rawMessage
+
+      if (typeof event.data === 'string') {
+        rawMessage = event.data
+      } else if (event.data instanceof Blob) {
+        rawMessage = await event.data.text()
+      } else if (event.data instanceof ArrayBuffer) {
+        rawMessage = new TextDecoder().decode(event.data)
+      } else if (ArrayBuffer.isView(event.data)) {
+        rawMessage = new TextDecoder().decode(event.data)
+      } else {
+        rawMessage = String(event.data)
+      }
+
+      const payload = JSON.parse(rawMessage)
       const messageType = payload?.MessageType
+
       if (messageType === 'PositionReport') {
         vesselFromPositionReport(payload.Message)
       } else if (messageType === 'ShipStaticData') {

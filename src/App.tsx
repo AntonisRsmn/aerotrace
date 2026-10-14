@@ -697,9 +697,9 @@ export default function App() {
 
         <aside
           className={`details-panel panel ${
-            (selectedAircraft || selectedVessel) ? 'has-selection' : ''
+            selectedAircraft ? 'has-selection' : ''
           } ${mobilePanel === 'details' ? 'mobile-panel-open' : ''}`}
-          aria-label="Selected target details"
+          aria-label="Selected aircraft details"
         >
           <div className="panel-heading details-panel-heading">
             <div>
@@ -711,7 +711,13 @@ export default function App() {
               type="button"
               className="panel-close mobile-only"
               onClick={() => setMobilePanel(null)}
-              ari          {!selectedAircraft && !selectedVessel ? (
+              aria-label="Close details panel"
+            >
+              ×
+            </button>
+          </div>
+
+          {!selectedAircraft && !selectedVessel ? (
             <div className="details-empty">
               <div className="empty-plane" aria-hidden="true">✦</div>
               <strong>Select an aircraft or vessel</strong>
@@ -990,11 +996,7 @@ export default function App() {
             </div>
           )}
 
-          )etails may not be available in every response.'}
-              </p>
-            </div>
-          )}
-
+          )
           <footer className="details-footer">
             <span>DATA SOURCE</span>
             <strong>{source}</strong>

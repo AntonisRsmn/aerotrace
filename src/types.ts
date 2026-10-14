@@ -15,6 +15,25 @@ export type AircraftCategory =
   | 'Small / light'
   | 'Unknown'
 
+export type Vessel = {
+  id: string
+  mmsi: string
+  name: string | null
+  imo: string | null
+  callsign: string | null
+  vesselType: string
+  vesselTypeCode: number | null
+  destination: string | null
+  draughtM: number | null
+  latitude: number
+  longitude: number
+  speedKt: number | null
+  course: number | null
+  heading: number | null
+  navigationStatus: number | null
+  lastSeenSeconds: number | null
+}
+
 export type Aircraft = {
   id: string
   icao24: string

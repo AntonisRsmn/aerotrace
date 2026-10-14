@@ -1336,7 +1336,7 @@ export default function MapView({
     }
 
     if (!map.hasImage('aerotrace-vessel')) {
-      const size = 32
+      const size = 48
       const canvas = document.createElement('canvas')
       canvas.width = size
       canvas.height = size
@@ -1344,22 +1344,56 @@ export default function MapView({
 
       if (context) {
         context.translate(size / 2, size / 2)
+        context.lineJoin = 'round'
+        context.lineCap = 'round'
+
+        // Detailed top-down ship silhouette: bow, hull, stern,
+        // bridge, deckhouse and mast are all visible at map scale.
         context.beginPath()
-        context.moveTo(0, -13)
-        context.lineTo(7, 7)
-        context.lineTo(3, 6)
-        context.lineTo(3, 11)
-        context.lineTo(-3, 11)
-        context.lineTo(-3, 6)
-        context.lineTo(-7, 7)
+        context.moveTo(0, -21)
+        context.lineTo(8, -13)
+        context.lineTo(10, 10)
+        context.lineTo(7, 18)
+        context.lineTo(-7, 18)
+        context.lineTo(-10, 10)
+        context.lineTo(-8, -13)
         context.closePath()
         context.fillStyle = '#63F3C4'
         context.fill()
         context.strokeStyle = '#07111F'
-        context.lineWidth = 2
+        context.lineWidth = 2.5
         context.stroke()
-        context.fillStyle = '#07111F'
-        context.fillRect(-2, -2, 4, 8)
+
+        context.fillStyle = '#0B1823'
+        context.fillRect(-6, -7, 12, 14)
+        context.strokeStyle = '#63F3C4'
+        context.lineWidth = 1.5
+        context.strokeRect(-6, -7, 12, 14)
+
+        context.fillStyle = '#63F3C4'
+        context.fillRect(-4, -12, 8, 5)
+        context.fillRect(-3, 8, 6, 6)
+
+        context.strokeStyle = '#0B1823'
+        context.lineWidth = 1.5
+        context.beginPath()
+        context.moveTo(-9, 1)
+        context.lineTo(9, 1)
+        context.moveTo(-7, 5)
+        context.lineTo(7, 5)
+        context.stroke()
+
+        context.beginPath()
+        context.moveTo(0, -17)
+        context.lineTo(0, -22)
+        context.strokeStyle = '#63F3C4'
+        context.lineWidth = 1.5
+        context.stroke()
+
+        context.fillStyle = '#F1F6FF'
+        context.beginPath()
+        context.arc(0, -22, 1.7, 0, Math.PI * 2)
+        context.fill()
       }
 
       map.addImage('aerotrace-vessel', {
@@ -1368,6 +1402,7 @@ export default function MapView({
         data: context
           ? context.getImageData(0, 0, size, size).data
           : new Uint8Array(size * size * 4),
+        pixelRatio: 2,
       })
     }
 

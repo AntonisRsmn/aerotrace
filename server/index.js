@@ -44,6 +44,244 @@ const MAX_PHOTO_CACHE_SIZE = 2000
 const AIRCRAFT_TYPE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TYPE_LOOKUPS_PER_MINUTE = 24
 
+const AISSTREAM_API = 'wss://stream.aisstream.io/v0/stream'
+const AISSTREAM_MAX_VESSELS = 25_000
+const AISSTREAM_STALE_MS = 10 * 60_000
+
+const vesselCache = new Map()
+let aisStreamSocket = null
+let aisStreamReconnectTimer = null
+let aisStreamBoundsKey = ''
+let aisStreamConnecting = false
+
+function normalizeVesselType(type) {
+  const code = Number(type)
+  if (!Number.isFinite(code)) return 'Unknown'
+
+  if (code >= 70 && code <= 79) return 'Cargo'
+  if (code >= 80 && code <= 89) return 'Tanker'
+  if (code === 60 || code === 61 || code === 62 || code === 63 || code === 64 || code === 65 || code === 69) return 'Passenger'
+  if (code >= 30 && code <= 39) return 'Tug / Special'
+  if (code >= 36 && code <= 37) return 'Sailing / Pleasure'
+  if (code === 30) return 'Fishing'
+  return 'Other'
+}
+
+function vesselFromPositionReport(message) {
+  const report = message?.PositionReport ?? message?.positionReport
+  if (!report) return null
+
+  const mmsi = Number(report.UserID ?? report.userId)
+  const latitude = Number(report.Latitude ?? report.latitude)
+  const longitude = Number(report.Longitude ?? report.longitude)
+
+  if (
+    !Number.isInteger(mmsi) ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null
+  }
+
+  const existing = vesselCache.get(String(mmsi)) ?? {
+    mmsi: String(mmsi),
+    name: null,
+    imo: null,
+    callsign: null,
+    vesselType: 'Unknown',
+    vesselTypeCode: null,
+    destination: null,
+    draughtM: null,
+  }
+
+  const sog = Number(report.Sog ?? report.sog)
+  const cog = Number(report.Cog ?? report.cog)
+  const heading = Number(report.TrueHeading ?? report.trueHeading)
+
+  existing.latitude = latitude
+  existing.longitude = longitude
+  existing.speedKt = Number.isFinite(sog) && sog >= 0 ? sog : null
+  existing.course = Number.isFinite(cog) && cog >= 0 ? cog : null
+  existing.heading = Number.isFinite(heading) && heading >= 0 && heading < 360 ? heading : null
+  existing.navigationStatus = Number.isFinite(Number(report.NavigationalStatus ?? report.navigationalStatus))
+    ? Number(report.NavigationalStatus ?? report.navigationalStatus)
+    : null
+  existing.lastSeen = Date.now()
+  existing.vesselType = existing.vesselType || 'Unknown'
+
+  vesselCache.set(existing.mmsi, existing)
+
+  while (vesselCache.size > AISSTREAM_MAX_VESSELS) {
+    const oldest = vesselCache.keys().next().value
+    if (oldest === undefined) break
+    vesselCache.delete(oldest)
+  }
+
+  return existing
+}
+
+function applyVesselStaticReport(message) {
+  const report = message?.ShipStaticData ?? message?.shipStaticData
+  if (!report) return
+
+  const mmsi = Number(report.UserID ?? report.userId)
+  if (!Number.isInteger(mmsi)) return
+
+  const key = String(mmsi)
+  const existing = vesselCache.get(key) ?? {
+    mmsi: key,
+    latitude: null,
+    longitude: null,
+    speedKt: null,
+    course: null,
+    heading: null,
+    navigationStatus: null,
+    lastSeen: Date.now(),
+  }
+
+  const typeCode = Number(report.Type ?? report.type)
+  const name = String(report.Name ?? report.name ?? '').trim()
+  const imo = Number(report.ImoNumber ?? report.imoNumber)
+  const callsign = String(report.CallSign ?? report.callSign ?? '').trim()
+  const destination = String(report.Destination ?? report.destination ?? '').trim()
+  const draught = Number(report.MaximumStaticDraught ?? report.maximumStaticDraught)
+
+  existing.name = name || existing.name
+  existing.imo = Number.isFinite(imo) && imo > 0 ? String(imo) : existing.imo
+  existing.callsign = callsign || existing.callsign
+  existing.vesselTypeCode = Number.isFinite(typeCode) ? typeCode : existing.vesselTypeCode
+  existing.vesselType = Number.isFinite(typeCode) ? normalizeVesselType(typeCode) : existing.vesselType
+  existing.destination = destination || existing.destination
+  existing.draughtM = Number.isFinite(draught) && draught > 0 ? draught : existing.draughtM
+  existing.lastSeen = Date.now()
+
+  vesselCache.set(key, existing)
+}
+
+function scheduleAISStreamReconnect() {
+  if (aisStreamReconnectTimer || !process.env.AISSTREAM_API_KEY) return
+
+  aisStreamReconnectTimer = setTimeout(() => {
+    aisStreamReconnectTimer = null
+    connectAISStream()
+  }, 5000)
+}
+
+function sendAISStreamSubscription() {
+  if (!aisStreamSocket || aisStreamSocket.readyState !== 1) return
+
+  const bounds = aisStreamSubscriptionBounds
+  aisStreamSocket.send(JSON.stringify({
+    APIKey: process.env.AISSTREAM_API_KEY,
+    BoundingBoxes: [[
+      [bounds.lamin, bounds.lomin],
+      [bounds.lamax, bounds.lomax],
+    ]],
+    FilterMessageTypes: ['PositionReport', 'ShipStaticData'],
+  }))
+}
+
+let aisStreamSubscriptionBounds = {
+  lamin: -90,
+  lamax: 90,
+  lomin: -180,
+  lomax: 180,
+}
+
+function connectAISStream() {
+  if (!process.env.AISSTREAM_API_KEY || aisStreamConnecting) return
+  if (aisStreamSocket?.readyState === 1 || aisStreamSocket?.readyState === 0) return
+
+  if (typeof globalThis.WebSocket !== 'function') {
+    console.error('[AeroTrace AIS] WebSocket is unavailable in this Node runtime.')
+    return
+  }
+
+  aisStreamConnecting = true
+  const socket = new globalThis.WebSocket(AISSTREAM_API)
+  aisStreamSocket = socket
+
+  socket.addEventListener('open', () => {
+    aisStreamConnecting = false
+    console.log('[AeroTrace AIS] Connected to AISStream.')
+    sendAISStreamSubscription()
+  })
+
+  socket.addEventListener('message', (event) => {
+    try {
+      const payload = JSON.parse(String(event.data))
+      const messageType = payload?.MessageType
+      if (messageType === 'PositionReport') {
+        vesselFromPositionReport(payload.Message)
+      } else if (messageType === 'ShipStaticData') {
+        applyVesselStaticReport(payload.Message)
+      }
+    } catch (error) {
+      console.warn('[AeroTrace AIS] Invalid stream message:', error instanceof Error ? error.message : error)
+    }
+  })
+
+  socket.addEventListener('error', (event) => {
+    console.warn('[AeroTrace AIS] Stream error:', event?.message || 'WebSocket error')
+  })
+
+  socket.addEventListener('close', () => {
+    aisStreamConnecting = false
+    if (aisStreamSocket === socket) aisStreamSocket = null
+    console.warn('[AeroTrace AIS] Stream disconnected; retrying in 5 seconds.')
+    scheduleAISStreamReconnect()
+  })
+}
+
+function setAISStreamBounds(bounds) {
+  const normalized = {
+    lamin: Math.max(-90, Math.min(90, bounds.lamin)),
+    lamax: Math.max(-90, Math.min(90, bounds.lamax)),
+    lomin: Math.max(-180, Math.min(180, bounds.lomin)),
+    lomax: Math.max(-180, Math.min(180, bounds.lomax)),
+  }
+
+  const key = Object.values(normalized).map((value) => value.toFixed(2)).join(':')
+  if (key === aisStreamBoundsKey) return
+  aisStreamBoundsKey = key
+  aisStreamSubscriptionBounds = normalized
+
+  if (aisStreamSocket?.readyState === 1) {
+    sendAISStreamSubscription()
+  } else {
+    connectAISStream()
+  }
+}
+
+function getVisibleVessels(bounds) {
+  const cutoff = Date.now() - AISSTREAM_STALE_MS
+  const vessels = []
+
+  for (const [mmsi, vessel] of vesselCache) {
+    if (vessel.lastSeen < cutoff) {
+      vesselCache.delete(mmsi)
+      continue
+    }
+
+    if (
+      Number.isFinite(vessel.latitude) &&
+      Number.isFinite(vessel.longitude) &&
+      vessel.latitude >= bounds.lamin &&
+      vessel.latitude <= bounds.lamax &&
+      vessel.longitude >= bounds.lomin &&
+      vessel.longitude <= bounds.lomax
+    ) {
+      vessels.push(vessel)
+    }
+  }
+
+  return vessels
+}
+
 const ROOT_DIR = dirname(dirname(fileURLToPath(import.meta.url)))
 const DIST_DIR = join(ROOT_DIR, 'dist')
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data')
@@ -2271,6 +2509,36 @@ const server = createServer(async (request, response) => {
     })
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/vessels') {
+    let bounds
+
+    try {
+      bounds = getBounds(url)
+    } catch (error) {
+      return sendJson(response, 400, { error: error.message })
+    }
+
+    if (!process.env.AISSTREAM_API_KEY) {
+      return sendJson(response, 503, {
+        source: 'AISStream',
+        vessels: [],
+        available: false,
+        error: 'AISStream API key is not configured on the server.',
+      })
+    }
+
+    setAISStreamBounds(bounds)
+    connectAISStream()
+
+    return sendJson(response, 200, {
+      source: 'AISStream',
+      vessels: getVisibleVessels(bounds),
+      available: true,
+      streamConnected: aisStreamSocket?.readyState === 1,
+      time: Math.floor(Date.now() / 1000),
+    })
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/health') {
     const accounts = getOpenSkyAccounts()
     const now = Date.now()
@@ -2865,6 +3133,13 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, () => {
   console.log(`AeroTrace API listening on http://localhost:${PORT}`)
+
+  if (process.env.AISSTREAM_API_KEY) {
+    console.log('[AeroTrace AIS] AISStream API key configured.')
+    connectAISStream()
+  } else {
+    console.warn('[AeroTrace AIS] AISStream API key is not configured; vessels disabled.')
+  }
 
   const accounts = getOpenSkyAccounts()
 

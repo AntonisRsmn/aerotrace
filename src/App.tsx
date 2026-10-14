@@ -87,6 +87,7 @@ export default function App() {
   const [vesselSource, setVesselSource] = useState('AISStream')
   const [bounds, setBounds] = useState<MapBounds | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [trafficFilter, setTrafficFilter] = useState<'all' | 'aircraft' | 'vessels'>('all')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'airborne' | 'ground' | 'unknown'>('all')
   const [aircraftKindFilter, setAircraftKindFilter] = useState<'all' | 'helicopter' | 'non-helicopter'>('all')
@@ -293,12 +294,16 @@ export default function App() {
     })
   }, [aircraft, search, statusFilter, aircraftKindFilter, typeFilter, minAltitude, maxAltitude, minSpeed, maxSpeed])
 
+  const visibleAircraft = trafficFilter === 'vessels' ? [] : filteredAircraft
+  const visibleVessels = trafficFilter === 'aircraft' ? [] : vessels
+
   const activeFilterCount = [
-    search.trim() !== '', statusFilter !== 'all', aircraftKindFilter !== 'all',
+    trafficFilter !== 'all', search.trim() !== '', statusFilter !== 'all', aircraftKindFilter !== 'all',
     typeFilter !== 'all', minAltitude !== '', maxAltitude !== '', minSpeed !== '', maxSpeed !== '',
   ].filter(Boolean).length
 
   const clearFilters = () => {
+    setTrafficFilter('all')
     setSearch('')
     setStatusFilter('all')
     setAircraftKindFilter('all')
@@ -436,8 +441,8 @@ export default function App() {
       <section className="dashboard">
         <div className="map-stage">
           <MapView
-            aircraft={filteredAircraft}
-            vessels={vessels}
+            aircraft={visibleAircraft}
+            vessels={visibleVessels}
             selectedId={selectedId}
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}
@@ -527,6 +532,14 @@ export default function App() {
               <span className="filter-count">{activeFilterCount} active</span>
               <button type="button" className="filter-reset" onClick={clearFilters} disabled={activeFilterCount === 0}>Reset</button>
             </div>
+            <label className="filter-field">
+              <span>Traffic type</span>
+              <select value={trafficFilter} onChange={(event) => setTrafficFilter(event.target.value as typeof trafficFilter)}>
+                <option value="all">Aircraft + Vessels</option>
+                <option value="aircraft">Aircraft only</option>
+                <option value="vessels">Vessels only</option>
+              </select>
+            </label>
             <label className="filter-field">
               <span>Flight status</span>
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
